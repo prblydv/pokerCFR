@@ -2,11 +2,16 @@
 import math
 import random
 from typing import List
-
+import multiprocessing as mp
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import abstraction  # <-- add this
 
+import multiprocessing as mp
+import os
+from mp_worker import run_traversals, init_worker
 from config import (
     RNG_SEED,
     ADV_BUFFER_CAPACITY,
@@ -20,6 +25,9 @@ from poker_env import SimpleHoldemEnv, GameState, NUM_ACTIONS
 from abstraction import encode_state
 from networks import AdvantageNet, PolicyNet, move_to_device
 from replay_buffer import ReservoirBuffer
+import os
+import multiprocessing as mp
+from mp_worker import run_traversals, init_worker
 
 import logging
 
@@ -32,6 +40,9 @@ class DeepCFRTrainer:
     def __init__(self, env: SimpleHoldemEnv, state_dim: int):
         self.env = env
         self.state_dim = state_dim
+        # --- Persistent multiprocessing pool (Windows spawn safe) ---
+        self.num_cpus = os.cpu_count()
+        self.pool = mp.Pool(processes=self.num_cpus, initializer=init_worker)
 
         # One advantage net per player
         self.adv_nets: List[AdvantageNet] = [
@@ -268,6 +279,22 @@ class DeepCFRTrainer:
 
 
     # --- Main training loop ---
+    # inside deep_cfr_trainer.py
+    
+
+
+
+
+    def collect_parallel_advantage_data(self, state_dim: int, traversals_per_iter: int):
+        jobs = [(i, traversals_per_iter, state_dim) for i in range(self.num_cpus)]
+        results = self.pool.starmap(run_traversals, jobs)
+
+        merged0, merged1 = [], []
+        for r0, r1 in results:
+            merged0.extend(r0)
+            merged1.extend(r1)
+        return merged0, merged1
+
 
     def train(self, num_iterations: int,
               traversals_per_iter: int,
@@ -276,13 +303,24 @@ class DeepCFRTrainer:
             adv_losses_iter = []
 
             # Advantage learning for each player
+            # --- NEW: PARALLEL ADVANTAGE COLLECTION ---
+            adv0_samples, adv1_samples = self.collect_parallel_advantage_data(
+                state_dim=self.state_dim,
+                traversals_per_iter=traversals_per_iter
+            )
+
+            for s in adv0_samples:
+                self.adv_buffers[0].add(s)
+            for s in adv1_samples:
+                self.adv_buffers[1].add(s)
+
+            # Train advantage nets
+            adv_losses_iter = []
             for p in [0, 1]:
-                for _ in range(traversals_per_iter):
-                    s = self.env.new_hand()
-                    self.traverse(s, p)
                 loss = self.train_advantage_net(p)
                 if loss is not None:
                     adv_losses_iter.append(loss)
+
 
             # Strategy sampling
             for _ in range(strat_samples_per_iter):
@@ -308,6 +346,8 @@ class DeepCFRTrainer:
                     f"policy_loss={policy_loss:.4f}, "
                     f"eval_payoff_p0={payoff:.3f}"
                 )
+        self.pool.close()
+        self.pool.join()
 
     # --- Saving / playing ---
 
@@ -319,24 +359,39 @@ class DeepCFRTrainer:
         torch.save(self.policy_net.state_dict(), f"{path}/policy.pt")
         logger.info(f"Saved models to {path}/")
 
+    # import torch
+    # import random
+
     def choose_action_policy(self, state: GameState, player: int) -> int:
-        from poker_env import NUM_ACTIONS  # local import
+        from poker_env import NUM_ACTIONS
 
         env = self.env
         x = encode_state(state, player).to(DEVICE)
+
         with torch.no_grad():
             logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
-        probs = torch.exp(logp)
+
+        probs = torch.exp(logp)  # If log-softmax output, else use torch.softmax(logp, -1)
+
         legal_actions = env.legal_actions(state)
         mask = torch.zeros(NUM_ACTIONS, dtype=torch.float32, device=DEVICE)
         mask[legal_actions] = 1.0
+
         probs = probs * mask
         total = probs.sum()
+
         if total.item() <= 0:
+            # Uniform random over legal actions
             probs = mask / mask.sum()
         else:
-            probs = probs / total
-        a = self.sample_action(probs)
+            probs = probs / total  # Renormalize
+
+        # MIXED STRATEGY: sample from the probability distribution
+        a = torch.multinomial(probs, 1).item()
+
         if a not in legal_actions:
             a = random.choice(legal_actions)
+
         return a
+
+

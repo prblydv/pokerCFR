@@ -1,10 +1,27 @@
 # abstraction.py
+
+# expand the hole features (e.g., 10-dim richer encoding, Kicker gap, connectedness, suitedness one-hot, rank buckets, etc.).
+
 import itertools
 from typing import List
 
 import torch
 
 from config import STACK_SIZE
+import itertools
+import os
+import time
+import random
+import pickle
+from typing import List
+
+from config import STACK_SIZE
+# ------------------------------------------------------------------
+# Hand-strength LUT: maps 7-card raw score -> normalized [0,1]
+# ------------------------------------------------------------------
+
+_LUT_PATH = "hand_strength_lut.pkl"
+_SCORE_TO_PCTL = None  # filled by _load_or_build_lut()
 
 
 # --- Card utilities ----------------------------------------------------------
@@ -31,157 +48,321 @@ def card_suit(card: int) -> int:
 # 7: Full house
 # 8: Quads
 # 9: Straight flush
+from typing import List
+
+# Precompute rank/suit for 0..51 once (faster than calling helpers each time)
+_RANK_LUT = [c % 13 + 2 for c in range(52)]   # 2..14
+_SUIT_LUT = [c // 13       for c in range(52)]  # 0..3
+
 
 def evaluate_5card(cards: List[int]) -> int:
     """
-    Return a score for a 5-card hand.
-    Higher is better.
+    Fast 5-card hand evaluator.
+    Input:  list of 5 cards (0..51).
+    Output: integer score, higher is better.
     """
-    assert len(cards) == 5, "Internal error: evaluate_5card() must be given exactly 5 cards."
 
-    ranks = sorted([card_rank(c) for c in cards], reverse=True)
-    suits = [card_suit(c) for c in cards]
+    # --- decode ranks & suits ---
+    r0 = _RANK_LUT[cards[0]]
+    r1 = _RANK_LUT[cards[1]]
+    r2 = _RANK_LUT[cards[2]]
+    r3 = _RANK_LUT[cards[3]]
+    r4 = _RANK_LUT[cards[4]]
 
-    # Count ranks
-    rank_counts = {}
-    for r in ranks:
-        rank_counts[r] = rank_counts.get(r, 0) + 1
+    s0 = _SUIT_LUT[cards[0]]
+    s1 = _SUIT_LUT[cards[1]]
+    s2 = _SUIT_LUT[cards[2]]
+    s3 = _SUIT_LUT[cards[3]]
+    s4 = _SUIT_LUT[cards[4]]
 
-    # Sort by frequency (desc), then rank (desc)
-    counts = sorted(rank_counts.items(), key=lambda x: (-x[1], -x[0]))
-    freqs = [c[1] for c in counts]
+    ranks = [r0, r1, r2, r3, r4]
+    ranks.sort()                # ascending
+    r_desc = ranks[::-1]        # descending
 
-    is_flush = len(set(suits)) == 1
+    # --- flush check ---
+    is_flush = (s0 == s1 == s2 == s3 == s4)
 
-    # Straight detection -------------------------------------------------------
-    unique_ranks = sorted(set(ranks), reverse=True)
+    # --- straight check ---
+    uniq = sorted(set(ranks))
     is_straight = False
     high_straight = 0
+    if len(uniq) == 5:
+        # wheel: A-5 = [2,3,4,5,14]
+        if uniq == [2, 3, 4, 5, 14]:
+            is_straight = True
+            high_straight = 5
+        elif uniq[-1] - uniq[0] == 4:
+            is_straight = True
+            high_straight = uniq[-1]
 
-    if len(unique_ranks) >= 5:
-        # normal straights
-        for i in range(len(unique_ranks) - 4):
-            seq = unique_ranks[i:i+5]
-            if seq[0] - seq[4] == 4:
-                is_straight = True
-                high_straight = seq[0]
-                break
+    # --- rank frequencies (no dict, fixed small array) ---
+    cnt = [0] * 15  # 0..14
+    for r in ranks:
+        cnt[r] += 1
+    distinct = [r for r in range(2, 15) if cnt[r] > 0]
+    # sort distinct ranks by (freq, rank) descending
+    distinct.sort(key=lambda r: (cnt[r], r), reverse=True)
+    freqs = [cnt[r] for r in distinct]
 
-    # Wheel A-5: A,5,4,3,2
-    if not is_straight and {14,5,4,3,2}.issubset(set(unique_ranks)):
-        is_straight = True
-        high_straight = 5
+    # scoring scheme: cat in [1..9], then 5 kickers with 2 digits each
+    BASE = 10 ** 10
 
-    # Straight flush
+    # --- Straight flush ---
     if is_flush and is_straight:
-        category = 9
-        return category * 10**8 + high_straight * 10**6
+        cat = 9
+        return cat * BASE + high_straight * 10**8
 
-    # Quads
+    # --- Four of a kind ---
     if freqs[0] == 4:
-        quad = counts[0][0]
-        kicker = max(r for r in ranks if r != quad)
-        category = 8
-        return category * 10**8 + quad * 10**6 + kicker * 10**4
+        quad = distinct[0]
+        kicker = distinct[1]
+        cat = 8
+        return (cat * BASE +
+                quad * 10**8 +
+                kicker * 10**6)
 
-    # Full house
-    if freqs[0] == 3 and freqs[1] >= 2:
-        trip = counts[0][0]
-        pair = counts[1][0]
-        category = 7
-        return category * 10**8 + trip * 10**6 + pair * 10**4
+    # --- Full house ---
+    if freqs[0] == 3 and freqs[1] == 2:
+        trip = distinct[0]
+        pair = distinct[1]
+        cat = 7
+        return (cat * BASE +
+                trip * 10**8 +
+                pair * 10**6)
 
-    # Flush
+    # --- Flush ---
     if is_flush:
-        category = 6
-        score = category * 10**8
-        for i, r in enumerate(sorted(ranks, reverse=True)):
-            score += r * (10 ** (6 - 2 * i))
-        return score
+        cat = 6
+        # use all 5 ranks as kickers
+        a, b, c, d, e = r_desc
+        return (cat * BASE +
+                a * 10**8 +
+                b * 10**6 +
+                c * 10**4 +
+                d * 10**2 +
+                e)
 
-    # Straight
+    # --- Straight ---
     if is_straight:
-        category = 5
-        return category * 10**8 + high_straight * 10**6
+        cat = 5
+        return cat * BASE + high_straight * 10**8
 
-    # Trips
+    # --- Trips ---
     if freqs[0] == 3:
-        trip = counts[0][0]
-        kickers = sorted((r for r in ranks if r != trip), reverse=True)[:2]
-        category = 4
-        score = category * 10**8 + trip * 10**6
-        for i, k in enumerate(kickers):
-            score += k * (10 ** (4 - 2 * i))
-        return score
+        trip = distinct[0]
+        # remaining two kickers (highest first)
+        kickers = [r for r in r_desc if r != trip][:2]
+        k1, k2 = kickers
+        cat = 4
+        return (cat * BASE +
+                trip * 10**8 +
+                k1 * 10**6 +
+                k2 * 10**4)
 
-    # Two pair
+    # --- Two pair ---
     if freqs[0] == 2 and freqs[1] == 2:
-        p1 = counts[0][0]
-        p2 = counts[1][0]
+        p1, p2 = distinct[0], distinct[1]
         hi, lo = max(p1, p2), min(p1, p2)
-        kicker = max(r for r in ranks if r != p1 and r != p2)
-        category = 3
-        return (category * 10**8 +
-                hi * 10**6 +
-                lo * 10**4 +
-                kicker * 10**2)
+        kicker = [r for r in r_desc if r != hi and r != lo][0]
+        cat = 3
+        return (cat * BASE +
+                hi * 10**8 +
+                lo * 10**6 +
+                kicker * 10**4)
 
-    # One pair
+    # --- One pair ---
     if freqs[0] == 2:
-        pair = counts[0][0]
-        kickers = sorted((r for r in ranks if r != pair), reverse=True)[:3]
-        category = 2
-        score = category * 10**8 + pair * 10**6
-        for i, k in enumerate(kickers):
-            score += k * (10 ** (4 - 2 * i))
-        return score
+        pair = distinct[0]
+        kickers = [r for r in r_desc if r != pair][:3]
+        k1, k2, k3 = kickers
+        cat = 2
+        return (cat * BASE +
+                pair * 10**8 +
+                k1 * 10**6 +
+                k2 * 10**4 +
+                k3 * 10**2)
 
-    # High card
-    category = 1
-    score = category * 10**8
-    for i, r in enumerate(sorted(ranks, reverse=True)):
-        score += r * (10 ** (6 - 2 * i))
-    return score
+    # --- High card ---
+    cat = 1
+    a, b, c, d, e = r_desc
+    return (cat * BASE +
+            a * 10**8 +
+            b * 10**6 +
+            c * 10**4 +
+            d * 10**2 +
+            e)
 
 
 # --- 7-card evaluation -------------------------------------------------------
-
 def evaluate_7card(hole: List[int], board: List[int]) -> int:
     """
-    Best 5-card hand from up to 7 cards.
-    If < 5 cards, returns 0 (safe).
+    Best 5-card hand from 7 cards.
+    Same interface as before.
+    Uses unrolled combinations for speed (21 evals only).
     """
-    cards = hole + board
-    if len(cards) < 5:
-        return 0  # cannot evaluate a real hand yet
 
+    cards = hole + board
+    n = len(cards)
+    if n < 5:
+        return 0
+
+    # If exactly 5, skip loops entirely.
+    if n == 5:
+        return evaluate_5card(cards)
+
+    # If 6 or 7 → evaluate all 5-card subsets quickly
+    # Using unrolled indices eliminates itertools + list alloc.
     best = 0
-    for combo in itertools.combinations(cards, 5):
-        val = evaluate_5card(list(combo))
-        if val > best:
-            best = val
+
+    c0, c1, c2, c3, c4, c5, c6 = (cards + [0,0])[:7]  # safe padding
+
+    # 21 five-card subsets for 7 cards:
+    combos = [
+        (c0, c1, c2, c3, c4),
+        (c0, c1, c2, c3, c5),
+        (c0, c1, c2, c3, c6),
+        (c0, c1, c2, c4, c5),
+        (c0, c1, c2, c4, c6),
+        (c0, c1, c2, c5, c6),
+        (c0, c1, c3, c4, c5),
+        (c0, c1, c3, c4, c6),
+        (c0, c1, c3, c5, c6),
+        (c0, c1, c4, c5, c6),
+        (c0, c2, c3, c4, c5),
+        (c0, c2, c3, c4, c6),
+        (c0, c2, c3, c5, c6),
+        (c0, c2, c4, c5, c6),
+        (c0, c3, c4, c5, c6),
+        (c1, c2, c3, c4, c5),
+        (c1, c2, c3, c4, c6),
+        (c1, c2, c3, c5, c6),
+        (c1, c2, c4, c5, c6),
+        (c1, c3, c4, c5, c6),
+        (c2, c3, c4, c5, c6),
+    ]
+
+    for c in combos:
+        v = evaluate_5card(c)
+        if v > best:
+            best = v
+
     return best
 
 
+
 # --- Strength abstraction ----------------------------------------------------
+def _build_strength_lut(num_samples: int = 500_000, batch_size: int = 5_000) -> dict:
+    """
+    Build a LUT mapping evaluate_7card() scores to percentiles in [0,1].
+    Uses random 7-card samples.
+    Shows progress + rough ETA.
+    """
+    print(f"[LUT] Building hand-strength LUT with {num_samples} samples...")
+    start_time = time.time()
+    scores = []
+
+    cards_all = list(range(52))
+
+    for i in range(0, num_samples, batch_size):
+        batch_end = min(num_samples, i + batch_size)
+        for _ in range(i, batch_end):
+            # sample 7 distinct cards
+            seven = random.sample(cards_all, 7)
+            v = evaluate_7card(seven[:2], seven[2:])  # hole=2, board=5
+            scores.append(v)
+
+        # progress + ETA
+        done = batch_end
+        elapsed = time.time() - start_time
+        frac = done / num_samples
+        rate = done / elapsed if elapsed > 0 else 0.0
+        remaining = (num_samples - done) / rate if rate > 0 else 0.0
+
+        print(
+            f"[LUT] {done}/{num_samples} "
+            f"({frac:6.2%}) "
+            f"elapsed={elapsed:6.1f}s "
+            f"ETA={remaining:6.1f}s",
+            end="\r",
+            flush=True,
+        )
+
+    print()  # newline after progress
+
+    # build percentile mapping
+    unique_scores = sorted(set(scores))
+    n = len(unique_scores)
+    print(f"[LUT] Unique scores: {n}")
+
+    score_to_pctl = {}
+    if n == 1:
+        score_to_pctl[unique_scores[0]] = 0.5
+    else:
+        for idx, s in enumerate(unique_scores):
+            score_to_pctl[s] = idx / (n - 1)
+
+    # save to disk
+    with open(_LUT_PATH, "wb") as f:
+        pickle.dump(score_to_pctl, f)
+
+    total_time = time.time() - start_time
+    print(f"[LUT] Built and saved LUT to '{_LUT_PATH}' in {total_time:.1f}s")
+
+    return score_to_pctl
+def _load_or_build_lut() -> dict:
+    """
+    Load LUT from disk if present; otherwise build it.
+    """
+    global _SCORE_TO_PCTL
+
+    if _SCORE_TO_PCTL is not None:
+        return _SCORE_TO_PCTL
+
+    if os.path.exists(_LUT_PATH):
+        print(f"[LUT] Loading hand-strength LUT from '{_LUT_PATH}'...")
+        with open(_LUT_PATH, "rb") as f:
+            _SCORE_TO_PCTL = pickle.load(f)
+        print(f"[LUT] Loaded {len(_SCORE_TO_PCTL)} entries.")
+    else:
+        _SCORE_TO_PCTL = _build_strength_lut()
+
+    return _SCORE_TO_PCTL
+
+
+# initialize on import
+_load_or_build_lut()
 
 # --- Strength estimator ------------------------------------------------------
 
 def normalized_strength(hole: List[int], board: List[int]) -> float:
     """
     Returns a continuous strength estimator in [0,1].
-    Preflop (0-2 cards on board): use hole-card ranks only.
-    Flop/turn/river: use 7-card evaluation.
+
+    Preflop (0-2 cards on board): simple hole-card rank heuristic.
+    Flop/turn/river: evaluate best 5-card hand out of 7, then map
+    its raw score through the LUT to a [0,1] percentile.
     """
+    # Preflop heuristic stays cheap and simple
     if len(board) < 3:
         if len(hole) < 2:
             return 0.5  # neutral if we somehow don't have 2 cards yet
         r = sorted([card_rank(c) for c in hole], reverse=True)
         return (r[0] + r[1]) / (2 * 14.0)  # avg rank / max_rank
 
-    raw = evaluate_7card(hole, board)
-    return raw / 1e9  # large enough to keep in [0,1)-ish
+    # Postflop: use 7-card evaluation + LUT
+    scores_lut = _load_or_build_lut()  # ensures LUT is ready
 
+    raw = evaluate_7card(hole, board)
+    strength = scores_lut.get(raw, None)
+
+    if strength is None:
+        # Very rare: raw score not seen in sampling; fall back to
+        # nearest neighbor by value (simple linear search).
+        # This should almost never trigger if num_samples is large enough.
+        # To keep it cheap, just use normalized raw as backup.
+        strength = raw / 1e9
+
+    return float(strength)
 
 # --- Hole-card feature encoding ---------------------------------------------
 
@@ -199,6 +380,8 @@ def encode_hole_cards(hole: List[int]) -> List[float]:
     r2 = card_rank(hole[1]) - 2
     s1 = hole[0] // 13           # 0..3
     s2 = hole[1] // 13
+    # print("card1", hole[0], "rank", r1, "suit", s1)
+    # print("card2", hole[1], "rank", r2, "suit", s2)
 
     # order hi, lo
     if r2 > r1:
@@ -269,3 +452,5 @@ def encode_state(state, player: int) -> torch.Tensor:
     ] + hole_feats
 
     return torch.tensor(vec, dtype=torch.float32)
+
+

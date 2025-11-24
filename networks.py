@@ -1,185 +1,5 @@
-# # # networks.py
-# # import torch
-# # import torch.nn as nn
+# networks.py — High-capacity Residual MLP Networks for Deep CFR
 
-# # from config import NUM_ACTIONS, DEVICE
-
-
-# # class AdvantageNet(nn.Module):
-# #     def __init__(self, state_dim: int):
-# #         super().__init__()
-# #         self.net = nn.Sequential(
-# #             nn.Linear(state_dim, 128),
-# #             nn.ReLU(),
-# #             nn.Linear(128, 128),
-# #             nn.ReLU(),
-# #             nn.Linear(128, NUM_ACTIONS),
-# #         )
-
-# #     def forward(self, x: torch.Tensor) -> torch.Tensor:
-# #         return self.net(x)
-
-
-# # class PolicyNet(nn.Module):
-# #     def __init__(self, state_dim: int):
-# #         super().__init__()
-# #         self.net = nn.Sequential(
-# #             nn.Linear(state_dim, 128),
-# #             nn.ReLU(),
-# #             nn.Linear(128, 128),
-# #             nn.ReLU(),
-# #             nn.Linear(128, NUM_ACTIONS),
-# #         )
-
-# #     def forward(self, x: torch.Tensor) -> torch.Tensor:
-# #         logits = self.net(x)
-# #         return torch.log_softmax(logits, dim=-1)
-
-
-# # def move_to_device(model: nn.Module) -> nn.Module:
-# #     return model.to(DEVICE)
-
-
-
-
-
-
-
-
-
-
-# # networks.py  — STRONG UPGRADED CFR NETWORKS
-# import torch
-# import torch.nn as nn
-
-# from config import NUM_ACTIONS, DEVICE
-
-
-# # ---------------------------------------------------------
-# # Utility building blocks
-# # ---------------------------------------------------------
-
-# class ResidualBlock(nn.Module):
-#     """A small residual block improves stability and accuracy greatly."""
-#     def __init__(self, dim):
-#         super().__init__()
-#         self.fc1 = nn.Linear(dim, dim)
-#         self.norm1 = nn.LayerNorm(dim)
-#         self.act = nn.GELU()
-#         self.fc2 = nn.Linear(dim, dim)
-#         self.norm2 = nn.LayerNorm(dim)
-
-#     def forward(self, x):
-#         identity = x
-#         out = self.fc1(x)
-#         out = self.norm1(out)
-#         out = self.act(out)
-#         out = self.fc2(out)
-#         out = self.norm2(out)
-#         return self.act(out + identity)
-
-
-# # ---------------------------------------------------------
-# # Advantage Network
-# # ---------------------------------------------------------
-
-# class AdvantageNet(nn.Module):
-#     """
-#     Outputs regret/advantage estimates.
-#     Deep + stable + residual.
-#     """
-#     def __init__(self, state_dim: int):
-#         super().__init__()
-
-#         hidden = 256
-
-#         self.input = nn.Sequential(
-#             nn.Linear(state_dim, hidden),
-#             nn.LayerNorm(hidden),
-#             nn.GELU(),
-#         )
-
-#         self.blocks = nn.Sequential(
-#             ResidualBlock(hidden),
-#             ResidualBlock(hidden),
-#             ResidualBlock(hidden),
-#         )
-
-#         self.output = nn.Linear(hidden, NUM_ACTIONS)
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         h = self.input(x)
-#         h = self.blocks(h)
-#         return self.output(h)
-
-
-# # ---------------------------------------------------------
-# # Policy Network
-# # ---------------------------------------------------------
-
-# class PolicyNet(nn.Module):
-#     """
-#     Outputs log-probabilities for actions.
-#     Uses identical architecture to AdvantageNet but separate weights.
-#     """
-#     def __init__(self, state_dim: int):
-#         super().__init__()
-
-#         hidden = 256
-
-#         self.input = nn.Sequential(
-#             nn.Linear(state_dim, hidden),
-#             nn.LayerNorm(hidden),
-#             nn.GELU(),
-#         )
-
-#         self.blocks = nn.Sequential(
-#             ResidualBlock(hidden),
-#             ResidualBlock(hidden),
-#             ResidualBlock(hidden),
-#         )
-
-#         self.output = nn.Linear(hidden, NUM_ACTIONS)
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         h = self.input(x)
-#         h = self.blocks(h)
-#         logits = self.output(h)
-#         return torch.log_softmax(logits, dim=-1)
-
-
-# # ---------------------------------------------------------
-# # Device helper
-# # ---------------------------------------------------------
-
-# def move_to_device(model: nn.Module) -> nn.Module:
-#     return model.to(DEVICE)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# networks.py — Transformer + Residual Hybrid Network for Deep CFR
 import torch
 import torch.nn as nn
 
@@ -187,147 +7,138 @@ from config import NUM_ACTIONS, DEVICE
 
 
 # ---------------------------------------------------------
-# Positional Encoding
+# Utility blocks
 # ---------------------------------------------------------
-class PositionalEncoding(nn.Module):
-    def __init__(self, dim):
+
+class ResidualBlock(nn.Module):
+    """
+    Pre-norm residual MLP block:
+    y = x + Dropout(FF(LayerNorm(x)))
+    FF: Linear → GELU → Linear
+    """
+    def __init__(self, dim: int, hidden_mult: int = 4, dropout: float = 0.1):
         super().__init__()
-        self.pos = nn.Parameter(torch.randn(1, 1, dim))
-
-    def forward(self, x):
-        return x + self.pos
-
-
-# ---------------------------------------------------------
-# Transformer Block (Attention + FFN)
-# ---------------------------------------------------------
-class TransformerBlock(nn.Module):
-    def __init__(self, dim, heads=4, dropout=0.1):
-        super().__init__()
-
-        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, dropout=dropout, batch_first=True)
-        self.ln1 = nn.LayerNorm(dim)
-
-        self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.GELU(),
-            nn.Linear(dim * 4, dim),
-        )
-        self.ln2 = nn.LayerNorm(dim)
+        self.ln = nn.LayerNorm(dim)
+        self.fc1 = nn.Linear(dim, dim * hidden_mult)
+        self.act = nn.GELU()
+        self.fc2 = nn.Linear(dim * hidden_mult, dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
-        # Multi-head attention
-        attn_out, _ = self.attn(x, x, x)
-        x = self.ln1(x + self.dropout(attn_out))
-
-        # Feed-forward
-        ff_out = self.ff(x)
-        x = self.ln2(x + self.dropout(ff_out))
-
-        return x
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.ln(x)
+        h = self.fc1(h)
+        h = self.act(h)
+        h = self.fc2(h)
+        h = self.dropout(h)
+        return x + h
 
 
-# ---------------------------------------------------------
-# Residual MLP Block
-# ---------------------------------------------------------
-class ResidualMLP(nn.Module):
-    def __init__(self, dim):
+class GatingHead(nn.Module):
+    """
+    Optional gating on top of the shared trunk.
+    Helps shape outputs for each head (advantage / policy).
+    """
+    def __init__(self, dim: int):
         super().__init__()
-        self.fc1 = nn.Linear(dim, dim)
-        self.fc2 = nn.Linear(dim, dim)
         self.ln = nn.LayerNorm(dim)
-        self.act = nn.GELU()
-
-    def forward(self, x):
-        identity = x
-        out = self.act(self.fc1(x))
-        out = self.fc2(out)
-        return self.ln(identity + out)
-
-
-# ---------------------------------------------------------
-# Advantage Network (Regret/Advantage function)
-# ---------------------------------------------------------
-class AdvantageNet(nn.Module):
-    def __init__(self, state_dim: int):
-        super().__init__()
-
-        embed_dim = 128     # Transformer hidden size
-        self.embed_dim = embed_dim
-
-        # Project state vector → embedding
-        self.input_proj = nn.Sequential(
-            nn.Linear(state_dim, embed_dim),
-            nn.LayerNorm(embed_dim),
-            nn.GELU(),
-        )
-
-        # Attention-based processing
-        self.pos_enc = PositionalEncoding(embed_dim)
-        self.transformer = nn.Sequential(
-            TransformerBlock(embed_dim, heads=4),
-            TransformerBlock(embed_dim, heads=4),
-        )
-
-        # Additional MLP residual blocks
-        self.mlp = nn.Sequential(
-            ResidualMLP(embed_dim),
-            ResidualMLP(embed_dim),
-        )
-
-        # Final output → NUM_ACTIONS
-        self.output = nn.Linear(embed_dim, NUM_ACTIONS)
+        self.fc = nn.Linear(dim, dim)
+        self.act = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Convert (B, state_dim) → (B, 1, embed_dim)
-        h = self.input_proj(x).unsqueeze(1)
-        h = self.pos_enc(h)
-        h = self.transformer(h)
-        h = self.mlp(h)
-        h = h.squeeze(1)
+        return self.act(self.fc(self.ln(x)))
+
+
+# ---------------------------------------------------------
+# Advantage Network (Regret / Advantage function)
+# ---------------------------------------------------------
+
+class AdvantageNet(nn.Module):
+    """
+    High-capacity residual MLP approximator for regret/advantages.
+
+    Input:  state vector (B, state_dim)
+    Output: advantages (B, NUM_ACTIONS), unconstrained real values.
+    """
+    def __init__(
+        self,
+        state_dim: int,
+        trunk_dim: int = 512,
+        num_blocks: int = 6,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+
+        self.input_ln = nn.LayerNorm(state_dim)
+        self.input_proj = nn.Linear(state_dim, trunk_dim)
+
+        blocks = []
+        for _ in range(num_blocks):
+            blocks.append(ResidualBlock(trunk_dim, hidden_mult=4, dropout=dropout))
+        self.blocks = nn.Sequential(*blocks)
+
+        self.head_gate = GatingHead(trunk_dim)
+        self.output = nn.Linear(trunk_dim, NUM_ACTIONS)
+
+        # Small init on last layer to keep early-game stable
+        nn.init.uniform_(self.output.weight, -1e-3, 1e-3)
+        nn.init.zeros_(self.output.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, state_dim)
+        returns: (B, NUM_ACTIONS)
+        """
+        x = self.input_ln(x)
+        h = self.input_proj(x)
+        h = self.blocks(h)
+        h = self.head_gate(h)
         return self.output(h)
 
 
 # ---------------------------------------------------------
 # Policy Network (Average Strategy)
 # ---------------------------------------------------------
+
 class PolicyNet(nn.Module):
     """
-    Identical architecture to AdvantageNet, but separate parameters.
-    Produces log-softmax outputs for policy learning.
+    High-capacity residual MLP approximator for the average strategy.
+
+    Input:  state vector (B, state_dim)
+    Output: log-probs over actions (B, NUM_ACTIONS)
     """
-    def __init__(self, state_dim: int):
+    def __init__(
+        self,
+        state_dim: int,
+        trunk_dim: int = 512,
+        num_blocks: int = 6,
+        dropout: float = 0.1,
+    ):
         super().__init__()
 
-        embed_dim = 128
+        self.input_ln = nn.LayerNorm(state_dim)
+        self.input_proj = nn.Linear(state_dim, trunk_dim)
 
-        self.input_proj = nn.Sequential(
-            nn.Linear(state_dim, embed_dim),
-            nn.LayerNorm(embed_dim),
-            nn.GELU(),
-        )
+        blocks = []
+        for _ in range(num_blocks):
+            blocks.append(ResidualBlock(trunk_dim, hidden_mult=4, dropout=dropout))
+        self.blocks = nn.Sequential(*blocks)
 
-        self.pos_enc = PositionalEncoding(embed_dim)
-        self.transformer = nn.Sequential(
-            TransformerBlock(embed_dim, heads=4),
-            TransformerBlock(embed_dim, heads=4),
-        )
+        self.head_gate = GatingHead(trunk_dim)
+        self.output = nn.Linear(trunk_dim, NUM_ACTIONS)
 
-        self.mlp = nn.Sequential(
-            ResidualMLP(embed_dim),
-            ResidualMLP(embed_dim),
-        )
-
-        self.output = nn.Linear(embed_dim, NUM_ACTIONS)
+        nn.init.uniform_(self.output.weight, -1e-3, 1e-3)
+        nn.init.zeros_(self.output.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.input_proj(x).unsqueeze(1)
-        h = self.pos_enc(h)
-        h = self.transformer(h)
-        h = self.mlp(h)
-        h = h.squeeze(1)
-
+        """
+        x: (B, state_dim)
+        returns: log-probs (B, NUM_ACTIONS)
+        """
+        # print("ENCODED STATE:", x.cpu().numpy())
+        x = self.input_ln(x)
+        h = self.input_proj(x)
+        h = self.blocks(h)
+        h = self.head_gate(h)
         logits = self.output(h)
         return torch.log_softmax(logits, dim=-1)
 
@@ -335,5 +146,6 @@ class PolicyNet(nn.Module):
 # ---------------------------------------------------------
 # Device helper
 # ---------------------------------------------------------
+
 def move_to_device(model: nn.Module) -> nn.Module:
     return model.to(DEVICE)

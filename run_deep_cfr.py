@@ -1,7 +1,7 @@
 # run_deep_cfr.py
 import logging
 import os
-
+import multiprocessing as mp
 import matplotlib.pyplot as plt
 
 from config import (
@@ -114,6 +114,7 @@ def main():
     plot_training_curves(trainer)
     demo_hand(trainer)
 
-
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.set_start_method("spawn", force=True)
     main()
