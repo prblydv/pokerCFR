@@ -41,7 +41,7 @@ RANK_MAP = {11:"J", 12:"Q", 13:"K", 14:"A"}
 def card_to_str(c: int) -> str:
     r = RANK_MAP.get(card_rank(c), str(card_rank(c)))
     s = SUITS[card_suit(c)]
-    if s in ["♦", "♥"]:
+    if s in ["♦","♥"]:
         return f"{RED}{r}{s}{RESET}"
     return f"{BLUE}{r}{s}{RESET}"
 
@@ -67,7 +67,6 @@ ACTION_NAMES = {
     ACTION_ALL_IN:      "ALL-IN",
 }
 
-# Input mapping for human
 USER_INPUT = {
     "f": ACTION_FOLD,
     "c": ACTION_CALL,
@@ -96,6 +95,9 @@ def load_policy(state_dim: int) -> PolicyNet:
 # Bot action
 # ---------------------------------------------------------
 def choose_bot_action(policy_net, state, player, legal):
+    if not legal:
+        return None
+
     x = encode_state(state, player).float().unsqueeze(0)
     with torch.no_grad():
         logits = policy_net(x).squeeze(0)
@@ -114,7 +116,7 @@ def choose_bot_action(policy_net, state, player, legal):
 
 
 # ---------------------------------------------------------
-# Play one hand (cash game)
+# Play one hand
 # ---------------------------------------------------------
 def play_one_hand(policy_net, env, state):
     HUMAN = 0
@@ -124,51 +126,62 @@ def play_one_hand(policy_net, env, state):
     print(f"Your Cards: {card_to_str(state.hole[HUMAN][0])} {card_to_str(state.hole[HUMAN][1])}")
     print(f"Stacks: You={state.stacks[HUMAN]}, Bot={state.stacks[BOT]}")
     print(f"Pot: {state.pot}")
-    print(f"{YELLOW}==============================={RESET}\n")
 
+    sb = state.sb_player
+    bb = state.bb_player
+    dealer = sb  # SB = dealer in HU
+
+    print(f"Dealer: {'You' if dealer == HUMAN else 'Bot'}")
+    print(f"Big Blind: {'You' if bb == HUMAN else 'Bot'}")
+    print(f"{YELLOW}=============================== {RESET}\n")
+
+    # MAIN LOOP
     while not state.terminal:
 
         legal = env.legal_actions(state)
 
-        # --- Display state ---
+        # --- No legal actions -> advance street (all-in or street error) ---
+        if not legal:
+            state = env.step(state, ACTION_CALL)  # safe no-op
+            continue
+
         print(f"{BLUE}{BOLD}--------------------------------{RESET}")
         print(f"STREET {state.street}")
-        print(f"Board:  {board_to_str(state.board)}")
-        print(f"Pot:    {YELLOW}{state.pot:.2f}{RESET}")
-        print(f"Stacks: You={GREEN}{state.stacks[HUMAN]:.2f}{RESET}  "
-              f"Bot={RED}{state.stacks[BOT]:.2f}{RESET}")
-        print(f"To act: {GREEN+'YOU'+RESET if state.to_act==HUMAN else RED+'BOT'+RESET}\n")
+        print(f"Board: {board_to_str(state.board)}")
+        print(f"Pot:    {state.pot:.2f}")
+        print(f"Stacks: You={state.stacks[HUMAN]:.2f}  Bot={state.stacks[BOT]:.2f}")
+        print(f"To act: {('YOU' if state.to_act==HUMAN else 'BOT')}\n")
 
-        # ---------------- Human ----------------
+        # ------------- Human -------------
         if state.to_act == HUMAN:
             print(f"{WHITE}{BOLD}Your options:{RESET}")
             for a in legal:
                 print(f"  {a}: {ACTION_NAMES[a]}")
-            print(f"\nInput: f=fold, c=call, 1..7=raises, a=all-in\n")
+            print("\nInput: f=fold, c=call, 1..7=raises, a=all-in\n")
 
             action = None
             while action not in legal:
-                key = input(f"{GREEN}Your action → {RESET}").strip().lower()
+                key = input("Your action → ").strip().lower()
                 if key not in USER_INPUT:
                     print(f"{RED}Invalid input.{RESET}")
                     continue
-                a = USER_INPUT[key]
-                if a not in legal:
+                action = USER_INPUT[key]
+                if action not in legal:
                     print(f"{RED}Not legal here.{RESET}")
-                    continue
-                action = a
 
-            print(f"{GREEN}You → {ACTION_NAMES[action]}{RESET}\n")
+            print(f"You → {ACTION_NAMES[action]}\n")
 
-        # ---------------- Bot ----------------
+        # ------------- Bot -------------
         else:
             action = choose_bot_action(policy_net, state, BOT, legal)
-            print(f"{RED}Bot → {ACTION_NAMES[action]}{RESET}\n")
+            print(f"Bot → {ACTION_NAMES[action]}\n")
 
         # Apply action
         state = env.step(state, action)
 
-    # ---------------- Final result ----------------
+    # -----------------------------------------------------------
+    # FINAL RESULT
+    # -----------------------------------------------------------
     print(f"{YELLOW}{BOLD}========== HAND FINISHED =========={RESET}")
 
     if state.winner == -1:
@@ -179,16 +192,16 @@ def play_one_hand(policy_net, env, state):
         print(f"{RED}Bot wins +{state.stacks[BOT] - state.initial_stacks[BOT]:.2f}{RESET}")
 
     print(f"Final Board: {board_to_str(state.board)}")
+
     bc1, bc2 = state.hole[BOT]
-    print(f"Bot Cards:  {card_to_str(bc1)} {card_to_str(bc2)}")
+    print(f"Bot Cards: {card_to_str(bc1)} {card_to_str(bc2)}")
 
     print(f"{YELLOW}{BOLD}=============================={RESET}\n")
-
     return state
 
 
 # ---------------------------------------------------------
-# Main
+# MAIN LOOP
 # ---------------------------------------------------------
 def main():
     env = SimpleHoldemEnv()
@@ -202,8 +215,8 @@ def main():
     print("Initial stacks:", session.get_stacks())
 
     while True:
-        cont = input("\nPlay next hand? (y/n): ").strip().lower()
-        if cont != "y":
+        c = input("\nPlay next hand? (y/n): ").strip().lower()
+        if c != "y":
             break
 
         state = session.start_hand()

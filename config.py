@@ -2,7 +2,7 @@
 import logging
 
 # Randomness
-RNG_SEED = 429334
+RNG_SEED = 4933444
 
 # Poker game parameters
 STACK_SIZE = 200.0
@@ -20,7 +20,7 @@ BIG_BLIND = 1.0
 # 4.5× Raise
 # 6× Raise
 # ALL-IN
-NUM_ACTIONS = 10
+NUM_ACTIONS = 6
 
 # Deep CFR training parameters
 NUM_ITERATIONS = 10000          # increase for stronger bot

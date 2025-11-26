@@ -2,16 +2,11 @@
 import math
 import random
 from typing import List
-import multiprocessing as mp
-import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import abstraction  # <-- add this
 
-import multiprocessing as mp
-import os
-from mp_worker import run_traversals, init_worker
 from config import (
     RNG_SEED,
     ADV_BUFFER_CAPACITY,
@@ -25,9 +20,6 @@ from poker_env import SimpleHoldemEnv, GameState, NUM_ACTIONS
 from abstraction import encode_state
 from networks import AdvantageNet, PolicyNet, move_to_device
 from replay_buffer import ReservoirBuffer
-import os
-import multiprocessing as mp
-from mp_worker import run_traversals, init_worker
 
 import logging
 
@@ -40,9 +32,6 @@ class DeepCFRTrainer:
     def __init__(self, env: SimpleHoldemEnv, state_dim: int):
         self.env = env
         self.state_dim = state_dim
-        # --- Persistent multiprocessing pool (Windows spawn safe) ---
-        self.num_cpus = os.cpu_count()
-        self.pool = mp.Pool(processes=self.num_cpus, initializer=init_worker)
 
         # One advantage net per player
         self.adv_nets: List[AdvantageNet] = [
@@ -98,27 +87,100 @@ class DeepCFRTrainer:
 
     # --- Deep CFR traversal (external sampling) ---
 
+    # def traverse(self, state: GameState, player: int) -> float:
+    #     """
+    #     External-sampling CFR:
+    #     - From traverser 'player' POV.
+    #     - Sample chance & opponent actions.
+    #     - Enumerate traverser actions and update advantages.
+    #     Returns utility from traverser POV.
+    #     """
+    #     env = self.env
+    #     if state.terminal:
+    #         return env.terminal_payoff(state, player)
+
+    #     to_act = state.to_act
+    
+    #     # Encode state from current actor POV
+    #     x = encode_state(state, to_act).to(DEVICE)
+    #     with torch.no_grad():
+    #         adv_values = self.adv_nets[to_act](x.unsqueeze(0)).squeeze(0)
+
+    #     legal_actions = env.legal_actions(state)
+    #     # If no actions are legal, treat as terminal (all-in runout or frozen round)
+    #     if len(legal_actions) == 0:
+    #         return self.env.terminal_payoff(state, player)
+
+    #     legal_mask = torch.zeros(NUM_ACTIONS, dtype=torch.float32, device=DEVICE)
+    #     for a in legal_actions:
+    #         legal_mask[a] = 1.0
+
+    #     probs = self.regret_matching(adv_values, legal_mask)
+
+    #     # Traverser node -> enumerate actions
+    #     if to_act == player:
+    #         action_values = []
+    #         for a in range(NUM_ACTIONS):
+    #             if a not in legal_actions:
+    #                 action_values.append(0.0)
+    #                 continue
+    #             next_state = env.step(state, a)
+    #             v = self.traverse(next_state, player)
+    #             action_values.append(v)
+
+    #         node_val = sum(probs[a].item() * action_values[a] for a in range(NUM_ACTIONS))
+
+    #         advantages = [
+    #             action_values[a] - node_val if a in legal_actions else 0.0
+    #             for a in range(NUM_ACTIONS)
+    #         ]
+
+    #         self.adv_buffers[player].add(
+    #             (x.cpu(),
+    #              torch.tensor(advantages, dtype=torch.float32),
+    #              legal_mask.cpu())
+    #         )
+
+    #         return node_val
+    #     else:
+    #         # Sample opponent action
+    #         a = self.sample_action(probs)
+    #         if a not in legal_actions:
+    #             a = RNG.choice(legal_actions)
+    #         next_state = env.step(state, a)
+    #         return self.traverse(next_state, player)
+
+    # --- Strategy sampling ---
+
+
+
+
+
+
+
+
+
     def traverse(self, state: GameState, player: int) -> float:
         """
-        External-sampling CFR:
-        - From traverser 'player' POV.
-        - Sample chance & opponent actions.
-        - Enumerate traverser actions and update advantages.
-        Returns utility from traverser POV.
+        External-sampling CFR with safe THREAD-LEVEL parallelization
+        at traverser nodes.
+        - Keeps identical API
+        - No multiprocessing (avoids model pickling issues)
+        - Uses thread pool to parallelize recursive branches
+        - 3/4 CPU cores
         """
         env = self.env
         if state.terminal:
             return env.terminal_payoff(state, player)
 
         to_act = state.to_act
-    
-        # Encode state from current actor POV
+
+        # Encode state + compute advantages
         x = encode_state(state, to_act).to(DEVICE)
         with torch.no_grad():
             adv_values = self.adv_nets[to_act](x.unsqueeze(0)).squeeze(0)
 
         legal_actions = env.legal_actions(state)
-        # If no actions are legal, treat as terminal (all-in runout or frozen round)
         if len(legal_actions) == 0:
             return self.env.terminal_payoff(state, player)
 
@@ -128,40 +190,76 @@ class DeepCFRTrainer:
 
         probs = self.regret_matching(adv_values, legal_mask)
 
-        # Traverser node -> enumerate actions
+        # ======================================================
+        #          TRAVERSER NODE  → PARALLEL ENUMERATION
+        # ======================================================
         if to_act == player:
-            action_values = []
-            for a in range(NUM_ACTIONS):
-                if a not in legal_actions:
-                    action_values.append(0.0)
-                    continue
-                next_state = env.step(state, a)
-                v = self.traverse(next_state, player)
-                action_values.append(v)
 
+            # Prepare list for values
+            action_values = [0.0] * NUM_ACTIONS
+
+            # Only parallelize legal actions
+            legal_list = [a for a in range(NUM_ACTIONS) if a in legal_actions]
+
+            # #threads = 3/4 of CPU
+            import os, math, concurrent.futures
+            max_workers = max(1, math.floor(os.cpu_count() * 0.75))
+
+            # ThreadPoolExecutor → SAFE with PyTorch tensors + shared models
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {}
+                for a in legal_list:
+                    next_state = env.step(state, a)
+                    futures[pool.submit(self.traverse, next_state, player)] = a
+
+                # Collect results
+                for fut in concurrent.futures.as_completed(futures):
+                    a = futures[fut]
+                    try:
+                        action_values[a] = fut.result()
+                    except Exception:
+                        action_values[a] = 0.0   # fallback
+
+            # Compute expected node value
             node_val = sum(probs[a].item() * action_values[a] for a in range(NUM_ACTIONS))
 
+            # Compute advantages
             advantages = [
                 action_values[a] - node_val if a in legal_actions else 0.0
                 for a in range(NUM_ACTIONS)
             ]
 
+            # Store sample
             self.adv_buffers[player].add(
                 (x.cpu(),
-                 torch.tensor(advantages, dtype=torch.float32),
-                 legal_mask.cpu())
+                torch.tensor(advantages, dtype=torch.float32),
+                legal_mask.cpu())
             )
 
             return node_val
+
+        # ======================================================
+        #                OPPONENT NODE → SAMPLE
+        # ======================================================
         else:
-            # Sample opponent action
             a = self.sample_action(probs)
             if a not in legal_actions:
                 a = RNG.choice(legal_actions)
             next_state = env.step(state, a)
             return self.traverse(next_state, player)
 
-    # --- Strategy sampling ---
+
+
+
+
+
+
+
+
+
+
+
+
 
     def sample_strategy_trajectory(self):
         env = self.env
@@ -279,22 +377,6 @@ class DeepCFRTrainer:
 
 
     # --- Main training loop ---
-    # inside deep_cfr_trainer.py
-    
-
-
-
-
-    def collect_parallel_advantage_data(self, state_dim: int, traversals_per_iter: int):
-        jobs = [(i, traversals_per_iter, state_dim) for i in range(self.num_cpus)]
-        results = self.pool.starmap(run_traversals, jobs)
-
-        merged0, merged1 = [], []
-        for r0, r1 in results:
-            merged0.extend(r0)
-            merged1.extend(r1)
-        return merged0, merged1
-
 
     def train(self, num_iterations: int,
               traversals_per_iter: int,
@@ -303,24 +385,13 @@ class DeepCFRTrainer:
             adv_losses_iter = []
 
             # Advantage learning for each player
-            # --- NEW: PARALLEL ADVANTAGE COLLECTION ---
-            adv0_samples, adv1_samples = self.collect_parallel_advantage_data(
-                state_dim=self.state_dim,
-                traversals_per_iter=traversals_per_iter
-            )
-
-            for s in adv0_samples:
-                self.adv_buffers[0].add(s)
-            for s in adv1_samples:
-                self.adv_buffers[1].add(s)
-
-            # Train advantage nets
-            adv_losses_iter = []
             for p in [0, 1]:
+                for _ in range(traversals_per_iter):
+                    s = self.env.new_hand()
+                    self.traverse(s, p)
                 loss = self.train_advantage_net(p)
                 if loss is not None:
                     adv_losses_iter.append(loss)
-
 
             # Strategy sampling
             for _ in range(strat_samples_per_iter):
@@ -346,8 +417,6 @@ class DeepCFRTrainer:
                     f"policy_loss={policy_loss:.4f}, "
                     f"eval_payoff_p0={payoff:.3f}"
                 )
-        self.pool.close()
-        self.pool.join()
 
     # --- Saving / playing ---
 
