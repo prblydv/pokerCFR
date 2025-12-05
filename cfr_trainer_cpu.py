@@ -186,7 +186,8 @@ class DeepCFR_CPU:
     # STRATEGY TRAJECTORIES FOR POLICY NETWORK
     # --------------------------------------------------------
     def sample_strategy_hand(self):
-        s = self.env.new_hand()
+        seat = RNG.randint(0, 1)
+        s = self.new_hand_for_player(seat)
 
         while not s.terminal:
             p = s.to_act
@@ -269,6 +270,17 @@ class DeepCFR_CPU:
         self.policy_opt.step()
 
         return loss.item()
+    def new_hand_for_player(self, player):
+        s = self.env.new_hand()
+    
+        # If player != 0, swap seats
+        if player == 1:
+            s.hole = [s.hole[1], s.hole[0]]
+            s.stacks = [s.stacks[1], s.stacks[0]]
+            s.contrib = [s.contrib[1], s.contrib[0]]
+            s.initial_stacks = [s.initial_stacks[1], s.initial_stacks[0]]
+    
+        return s
 
     # --------------------------------------------------------
     # TRIAN LOOP
@@ -286,7 +298,8 @@ class DeepCFR_CPU:
             # --- CFR Regret Traversal ---
             for p in [0, 1]:
                 for _ in range(traversals_per_iter):
-                    s = self.env.new_hand()
+                    s = self.new_hand_for_player(p)
+                    # s = self.env.new_hand()
                     self.traverse(s, p)
                 self.train_advantage(p)
 
@@ -296,7 +309,7 @@ class DeepCFR_CPU:
             self.train_policy()
 
             # --- Optional Evaluation ---
-            if evaluator and (it % evaluator["freq"] == 0):
+            if evaluator and (it % 4== 0):
                 eval_start = time.perf_counter()
                 # 1) evaluator provided by caller — keep compatibility
                 res = evaluator["fn"](self.policy_net)
@@ -307,6 +320,7 @@ class DeepCFR_CPU:
                 # 2) Instrumentation: compare against previous policy snapshot (if available)
                 try:
                     import eval_match_cpu as _eval_mod
+                    from eval_match_cpu import print_eval_stats_colored
                     if self._prev_policy_state is not None:
                         # build previous policy net from snapshot
                         prev_net = PolicyNet(self.state_dim).to(DEVICE)
@@ -316,9 +330,8 @@ class DeepCFR_CPU:
                         compare_start = time.perf_counter()
                         compare_stats = _eval_mod.eval_match_cpu(self.env, self.policy_net, prev_net, num_games=DEFAULT_EVAL_GAMES)
                         compare_elapsed = time.perf_counter() - compare_start
-                        logging.getLogger(__name__).info(
-                            f"Compare new_vs_prev finished in {compare_elapsed:0.3f}s — new_ev={compare_stats.get('ev_per_hand')}, prev_vs_new? (bot0 EV)"
-                        )
+                        print_eval_stats_colored(compare_stats,it)
+                         
                         # keep last compare in stats for inspection
                         stats[-1]["compare_new_vs_prev"] = compare_stats
                     else:

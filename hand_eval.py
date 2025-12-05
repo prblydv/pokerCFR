@@ -67,6 +67,7 @@ def convert_list(cards):
 # --------------------------------------------
 
 def evaluate_7card(hole, board):
+    # print("called the evaluator", hole)
     """
     hole  = [c1, c2]   your card indices
     board = [c1,c2,c3,c4,c5]

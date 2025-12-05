@@ -18,7 +18,7 @@ STRAT_BATCH = 2048
 ADV_LR = 1e-4
 POLICY_LR = 1e-4
 
-MAX_DEPTH = 200  # Failsafe recursive cutoff
+MAX_DEPTH = 8# Failsafe recursive cutoff
 
 NUM_ACTIONS = 9
 
@@ -26,7 +26,7 @@ NUM_ACTIONS = 9
 # Defaults for training / evaluation (consolidated so you don't
 # need to search for numbers in the codebase)
 # ------------------------------------------------------------
-DEFAULT_ITERATIONS = 2000
+DEFAULT_ITERATIONS = 200000
 DEFAULT_TRAVERSALS_PER_ITER = 30
 DEFAULT_STRAT_SAMPLES_PER_ITER = 30
 DEFAULT_EVAL_FREQ = 200
