@@ -1,41 +1,34 @@
-# config.py
-import logging
+# ============================================================
+# config.py — Deep CFR CPU settings
+# ============================================================
 
-# Randomness
-RNG_SEED = 4933444
+import torch
 
-# Poker game parameters
-STACK_SIZE = 200.0
-SMALL_BLIND = 0.5
-BIG_BLIND = 1.0
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Actons: fold, call, 7 raise sizes, all-in
-# FOLD
-# CALL
-# 2× Raise (min-open)
-# 2.25× Raise
-# 2.5× Raise
-# 3× Raise
-# 3.5× Raise
-# 4.5× Raise
-# 6× Raise
-# ALL-IN
-NUM_ACTIONS = 6
+RNG_SEED = 42
 
-# Deep CFR training parameters
-NUM_ITERATIONS = 10000          # increase for stronger bot
-TRAVERSALS_PER_ITER = 5
-STRAT_SAMPLES_PER_ITER = 50
+# Replay buffers
+ADV_BUFFER_CAP = 200000
+STRAT_BUFFER_CAP = 200000
 
-ADV_BUFFER_CAPACITY = 500_000
-STRAT_BUFFER_CAPACITY = 100_000
+ADV_BATCH = 2048
+STRAT_BATCH = 2048
 
-BATCH_SIZE = 128
-ADV_LR = 1e-3
-POLICY_LR = 1e-3
+ADV_LR = 1e-4
+POLICY_LR = 1e-4
 
-# Logging & device
-LOG_LEVEL = logging.INFO
-LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+MAX_DEPTH = 200  # Failsafe recursive cutoff
 
-DEVICE = "cuda"  # change to "cuda" if you have a GPU
+NUM_ACTIONS = 9
+
+# ------------------------------------------------------------
+# Defaults for training / evaluation (consolidated so you don't
+# need to search for numbers in the codebase)
+# ------------------------------------------------------------
+DEFAULT_ITERATIONS = 2000
+DEFAULT_TRAVERSALS_PER_ITER = 30
+DEFAULT_STRAT_SAMPLES_PER_ITER = 30
+DEFAULT_EVAL_FREQ = 200
+DEFAULT_SAVE_EVERY = 500
+DEFAULT_EVAL_GAMES = 200

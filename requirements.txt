@@ -1,3 +1,0 @@
-matplotlib==3.8.1
-numpy==2.3.5
-torch==2.2.0.dev20231114+cu121
