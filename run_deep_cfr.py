@@ -1,6 +1,12 @@
-# run_deep_cfr.py
+# ---------------------------------------------------------------------------
+# File overview:
+#   run_deep_cfr.py is the CLI entry for training the Deep CFR agent.
+#   Run via `python run_deep_cfr.py` to start training, logging, plotting, etc.
+# ---------------------------------------------------------------------------
 import logging
 import os
+import signal
+import sys
 
 import matplotlib.pyplot as plt
 
@@ -10,6 +16,8 @@ from config import (
     NUM_ITERATIONS,
     TRAVERSALS_PER_ITER,
     STRAT_SAMPLES_PER_ITER,
+    AUTO_RESUME_ON_START,
+    CHECKPOINT_PATH,
 )
 from poker_env import SimpleHoldemEnv
 from abstraction import encode_state
@@ -17,27 +25,41 @@ from deep_cfr_trainer import DeepCFRTrainer
 
 logger = logging.getLogger("DeepCFR")
 
+# Global reference to trainer for signal handling
+_trainer = None
 
+
+# Function metadata:
+#   Inputs: no explicit parameters  # dtype=varies
+#   Sample:
+#       sample_output = setup_logging()  # dtype=Any
 def setup_logging():
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
 
+# Function metadata:
+#   Inputs: trainer, out_path  # dtype=varies
+#   Sample:
+#       sample_output = plot_training_curves(trainer=None, out_path=None)  # dtype=Any
 def plot_training_curves(trainer: DeepCFRTrainer, out_path: str = "training_curves.png"):
     fig, ax1 = plt.subplots()
 
-    ax1.set_xlabel("Iteration (x10 for eval points)")
+    ax1.set_xlabel("Iteration")
     ax1.set_ylabel("Loss")
-    iters_loss = list(range(10, 10 * len(trainer.adv_losses) + 1, 10))
     if trainer.adv_losses:
-        ax1.plot(iters_loss, trainer.adv_losses, label="Advantage loss")
+        adv_x = list(range(1, len(trainer.adv_losses) + 1))
+        ax1.plot(adv_x, trainer.adv_losses, label="Advantage loss")
     if trainer.policy_losses:
-        ax1.plot(iters_loss, trainer.policy_losses, label="Policy loss")
-    ax1.legend(loc="upper left")
+        pol_x = list(range(1, len(trainer.policy_losses) + 1))
+        ax1.plot(pol_x, trainer.policy_losses, label="Policy loss")
+    if trainer.adv_losses or trainer.policy_losses:
+        ax1.legend(loc="upper left")
 
     if trainer.eval_payoffs:
         ax2 = ax1.twinx()
         ax2.set_ylabel("Avg payoff P0")
-        ax2.plot(iters_loss, trainer.eval_payoffs, color="green", label="Eval payoff P0")
+        eval_x = list(range(1, len(trainer.eval_payoffs) + 1))
+        ax2.plot(eval_x, trainer.eval_payoffs, color="green", label="Eval payoff P0")
         ax2.legend(loc="upper right")
 
     fig.tight_layout()
@@ -46,17 +68,17 @@ def plot_training_curves(trainer: DeepCFRTrainer, out_path: str = "training_curv
     logger.info(f"Saved training curves to {out_path}")
 
 
+# Function metadata:
+#   Inputs: trainer  # dtype=varies
+#   Sample:
+#       sample_output = demo_hand(trainer=None)  # dtype=Any
 def demo_hand(trainer: DeepCFRTrainer):
     from poker_env import (
         ACTION_FOLD,
+        ACTION_CHECK,
         ACTION_CALL,
-        ACTION_RAISE_2X,
-        ACTION_RAISE_2_25X,
-        ACTION_RAISE_2_5X,
-        ACTION_RAISE_3X,
-        ACTION_RAISE_3_5X,
-        ACTION_RAISE_4_5X,
-        ACTION_RAISE_6X,
+        ACTION_RAISE_SMALL,
+        ACTION_RAISE_MEDIUM,
         ACTION_ALL_IN,
     )
 
@@ -66,14 +88,10 @@ def demo_hand(trainer: DeepCFRTrainer):
 
     action_names = {
         ACTION_FOLD: "FOLD",
-        ACTION_CALL: "CALL/CHECK",
-        ACTION_RAISE_2X: "RAISE 2× POT",
-        ACTION_RAISE_2_25X: "RAISE 2.25× POT",
-        ACTION_RAISE_2_5X: "RAISE 2.5× POT",
-        ACTION_RAISE_3X: "RAISE 3× POT",
-        ACTION_RAISE_3_5X: "RAISE 3.5× POT",
-        ACTION_RAISE_4_5X: "RAISE 4.5× POT",
-        ACTION_RAISE_6X: "RAISE 6× POT",
+        ACTION_CHECK: "CHECK",
+        ACTION_CALL: "CALL",
+        ACTION_RAISE_SMALL: "RAISE SMALL",
+        ACTION_RAISE_MEDIUM: "RAISE MEDIUM",
         ACTION_ALL_IN: "ALL-IN",
     }
 
@@ -92,27 +110,89 @@ def demo_hand(trainer: DeepCFRTrainer):
     )
 
 
+# Function metadata:
+#   Inputs: signum, frame  # dtype=varies
+#   Sample:
+#       sample_output = signal_handler(signum=None, frame=None)  # dtype=Any
+def signal_handler(signum, frame):
+    """Handle Ctrl+C gracefully by saving models before exit."""
+    global _trainer
+    logger.warning("\n[SIGNAL] Received interrupt signal. Saving models and exiting gracefully...")
+    if _trainer is not None:
+        try:
+            _trainer.save_models()
+            plot_training_curves(_trainer)
+            logger.info("Models saved successfully.")
+        except Exception as e:
+            logger.error(f"Error saving models: {e}")
+    sys.exit(0)
+
+
+# Function metadata:
+#   Inputs: no explicit parameters  # dtype=varies
+#   Sample:
+#       sample_output = main()  # dtype=Any
 def main():
+    """Main training entry point with production error handling."""
+    global _trainer
     setup_logging()
-    logger.info("Initializing environment...")
-    env = SimpleHoldemEnv()
-    example_state = env.new_hand()
-    from abstraction import encode_state as enc
-    state_dim = enc(example_state, player=0).shape[0]
-    logger.info(f"State dimension: {state_dim}")
+    
+    try:
+        logger.info("="*60)
+        logger.info("DEEP CFR POKER BOT - TRAINING")
+        logger.info("="*60)
+        
+        logger.info("Initializing environment...")
+        env = SimpleHoldemEnv()
+        example_state = env.new_hand()
+        from abstraction import encode_state as enc
+        state_dim = enc(example_state, player=0).shape[0]
+        logger.info(f"State dimension: {state_dim}")
 
-    trainer = DeepCFRTrainer(env, state_dim)
-    logger.info("Starting Deep CFR training...")
-    trainer.train(
-        num_iterations=NUM_ITERATIONS,
-        traversals_per_iter=TRAVERSALS_PER_ITER,
-        strat_samples_per_iter=STRAT_SAMPLES_PER_ITER,
-    )
-    logger.info("Training complete.")
-
-    trainer.save_models()
-    plot_training_curves(trainer)
-    demo_hand(trainer)
+        logger.info("Initializing trainer...")
+        trainer = DeepCFRTrainer(env, state_dim)
+        _trainer = trainer
+        if "AUTO_RESUME_ON_START" in globals() and AUTO_RESUME_ON_START:
+            try:
+                loaded = trainer.load_models(CHECKPOINT_PATH)
+                if loaded:
+                    logger.info("Resumed trainer from existing checkpoints.")
+            except Exception:
+                logger.warning("Auto-resume failed; starting fresh.", exc_info=True)
+        # Register signal handler for graceful shutdown
+        signal.signal(signal.SIGINT, signal_handler)
+        
+        logger.info("Starting Deep CFR training...")
+        logger.info(f"Configuration: {NUM_ITERATIONS} iterations, "
+                   f"{TRAVERSALS_PER_ITER} traversals, "
+                   f"{STRAT_SAMPLES_PER_ITER} strategy samples per iteration")
+        
+        trainer.train(
+            num_iterations=NUM_ITERATIONS,
+            traversals_per_iter=TRAVERSALS_PER_ITER,
+            strat_samples_per_iter=STRAT_SAMPLES_PER_ITER,
+        )
+        logger.info("Training complete.")
+        
+        logger.info("Saving final models...")
+        trainer.save_models()
+        
+        logger.info("Generating training curves...")
+        plot_training_curves(trainer)
+        
+        logger.info("Playing demo hand...")
+        demo_hand(trainer)
+        
+        logger.info("="*60)
+        logger.info("TRAINING FINISHED SUCCESSFULLY")
+        logger.info("="*60)
+        
+    except KeyboardInterrupt:
+        logger.warning("Training interrupted by user.")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Fatal error during training: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

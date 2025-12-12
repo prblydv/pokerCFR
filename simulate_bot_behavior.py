@@ -1,193 +1,173 @@
+# ---------------------------------------------------------------------------
+# File overview:
+#   simulate_bot_behavior.py rebuilds TRUE preflop action charts by sampling
+#   a trained PolicyNet on env-preflop states. Run via
+#       `python simulate_bot_behavior.py`
+#   after models are saved to `models/`.
+# ---------------------------------------------------------------------------
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
-from poker_env import SimpleHoldemEnv, STREET_PREFLOP
-from cash_session import CashSession
+from poker_env import SimpleHoldemEnv
 from abstraction import encode_state
-from deep_cfr_trainer import DeepCFRTrainer
+from networks import PolicyNet
 
 
-# =====================================================
-# Hole-card canonicalization
-# =====================================================
-RANK_MAP = "23456789TJQKA"
+# -------------------------------------------------------------------------
+# Action Labels (10 actions)
+# -------------------------------------------------------------------------
+ACTION_LABELS = {
+    0: "FOLD",
+    1: "CALL",
+    2: "2x",
+    3: "2.25x",
+    4: "2.5x",
+    5: "3x",
+    6: "3.5x",
+    7: "4.5x",
+    8: "6x",
+    9: "ALL-IN",
+}
 
-def card_to_label(card):
-    rank = card % 13
-    suit = card // 13
-    return RANK_MAP[rank], suit
+ACTION_COLORS = {
+    "FOLD": "#d3d3d3",
+    "CALL": "#87cefa",
+    "2x": "#add8e6",
+    "2.25x": "#87cefa",
+    "2.5x": "#00bfff",
+    "3x": "#1e90ff",
+    "3.5x": "#4169e1",
+    "4.5x": "#0000cd",
+    "6x": "#191970",
+    "ALL-IN": "#ff4d4d",
+}
 
-def hand_label(cards):
-    r1, s1 = card_to_label(cards[0])
-    r2, s2 = card_to_label(cards[1])
-
-    # sort by rank descending
-    if RANK_MAP.index(r1) < RANK_MAP.index(r2):
-        r1, r2 = r2, r1
-        s1, s2 = s2, s1
-
-    suited = "s" if s1 == s2 else "o"
-    if r1 == r2:
-        return r1 + r2   # pocket pairs
-    else:
-        return r1 + r2 + suited
-
-
-# =====================================================
-# Logger
-# =====================================================
-def init_logger():
-    return {"hands": [], "actions": []}
-
-
-# =====================================================
-# Load policy
-# =====================================================
-def load_policy(env):
-    example = env.new_hand()
-    dim = encode_state(example, 0).shape[0]
-    trainer = DeepCFRTrainer(env, dim)
-    trainer.policy_net.load_state_dict(torch.load("models/policy.pt", map_location="cpu"))
-    return trainer
+# 13x13 rank grid
+RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
 
 
-# =====================================================
-# Choose action from policy
-# =====================================================
-def choose_action(policy_net, state, env):
-    legal = env.legal_actions(state)
-
-    x = encode_state(state, state.to_act).unsqueeze(0)
-    with torch.no_grad():
-        logp = policy_net(x)[0]
-
-    mask = torch.full((5,), -1e9)
-    for a in legal:
-        mask[a] = 0
-
-    probs = torch.softmax(logp + mask, dim=-1)
-    return torch.multinomial(probs, 1).item()
-
-
-# =====================================================
-# PLAY ONE HAND – but LOG ONLY FIRST PREFLOP ACTION OF BOT
-# =====================================================
-BOT = 1
-
-def play_hand(policy, env, session, logger):
-    s = session.start_hand()
-    preflop_logged = False
-
-    while not s.terminal:
-        to_act = s.to_act
-        action = choose_action(policy.policy_net, s, env)
-
-        # ------ LOGGING FILTER -------
-        if (not preflop_logged and
-            to_act == BOT and
-            s.street == STREET_PREFLOP):
-            label = hand_label(s.hole[BOT])
-            logger["hands"].append(label)
-            logger["actions"].append(action)
-            preflop_logged = True
-        # -----------------------------
-
-        s = env.step(s, action)
-
-    session.apply_results(s)
-
-
-# =====================================================
-# Scatter plot (clean!)
-# =====================================================
-# =====================================================
-# GTO-Wizard Style 13×13 Heatmap
-# =====================================================
-
-import numpy as np
-import matplotlib.pyplot as plt
-from collections import defaultdict, Counter
-
-# Ranks sorted highest → lowest for grid
-GRID_RANKS = "AKQJT98765432"
-GRID_INDEX = {r: i for i, r in enumerate(GRID_RANKS)}
-
-def grid_coords(hand):
+# -------------------------------------------------------------------------
+# Build *real* preflop state from env.new_hand()
+# -------------------------------------------------------------------------
+# Function metadata:
+#   Inputs: env, hole  # dtype=varies
+#   Sample:
+#       sample_output = get_real_preflop_state(env=mock_env, hole=[10, 23])  # dtype=Any
+def get_real_preflop_state(env, hole):
     """
-    Convert canonical hand label to (row, col) in a 13×13 matrix.
-    - AA is (0,0), KK is (1,1), ..., 22 is (12,12)
-    - Suited hands: above diagonal (row < col)
-    - Offsuit: below diagonal (row > col)
+    Create a true preflop state exactly like training:
+    - blinds already posted by env
+    - pot = 1.5
+    - current_bet = 1.0 (BB)
+    - stacks = [199.5, 199.0]
+    - last_aggressor set correctly
+    - player_to_act is correct (SB acts first)
     """
-    if len(hand) == 2:      # pocket pair, e.g. "TT"
-        r1, r2 = hand[0], hand[1]
-        return GRID_INDEX[r1], GRID_INDEX[r2]
-
-    # Suited or offsuit: e.g., "AKs" or "JTo"
-    r1, r2, suited_flag = hand[0], hand[1], hand[2]
-    i = GRID_INDEX[r1]
-    j = GRID_INDEX[r2]
-    return i, j
+    s = env.new_hand()       # This posts blinds and prepares a real statex 
+    s.hole[0] = hole[:]      # hero cards
+    return s
 
 
-def plot_heatmap(logger):
-    hands = logger["hands"]
-    actions = logger["actions"]
+# -------------------------------------------------------------------------
+# Compute average logits over multiple real env preflop samples
+# -------------------------------------------------------------------------
+# Function metadata:
+#   Inputs: policy, env, hole, samples, device  # dtype=varies
+#   Sample:
+#       sample_output = get_avg_policy_logits(policy=None, env=mock_env, hole=[10, 23], samples=None, device='cpu')  # dtype=Any
+def get_avg_policy_logits(policy, env, hole, samples=20, device="cpu"):
+    logits_accum = None
 
-    # 13×13 buckets storing lists of actions
-    buckets = [[[] for _ in range(13)] for _ in range(13)]
+    for _ in range(samples):
+        s = get_real_preflop_state(env, hole)
 
-    # Fill buckets
-    for h, a in zip(hands, actions):
-        i, j = grid_coords(h)
-        buckets[i][j].append(a)
+        x = encode_state(s, 0).to(device).unsqueeze(0)
 
-    # Reduce to the most common action (mode)
-    grid = np.full((13, 13), np.nan)
+        with torch.no_grad():
+            logits = policy(x).squeeze(0)
+
+        if logits_accum is None:
+            logits_accum = logits
+        else:
+            logits_accum += logits
+
+    logits_accum /= samples
+    probs = torch.softmax(logits_accum, dim=-1)
+    a = torch.argmax(probs).item()
+
+    return ACTION_LABELS[a]
+
+
+# -------------------------------------------------------------------------
+# MAIN: Generate true preflop heatmap
+# -------------------------------------------------------------------------
+if __name__ == "__main__":
+
+    env = SimpleHoldemEnv()
+
+    # Determine state dimension
+    dummy = env.new_hand()
+    state_dim = encode_state(dummy, 0).numel()
+
+    # Load trained policy
+    policy = PolicyNet(state_dim)
+    policy.load_state_dict(torch.load("models/policy.pt", map_location="cpu"))
+    policy.eval()
+
+    matrix = np.empty((13,13), dtype=object)
+
+    # Build grid
+    for i, r1 in enumerate(RANKS):
+        for j, r2 in enumerate(RANKS):
+            
+            hi = 12 - i
+            lo = 12 - j
+
+            c1 = hi        # suit 0
+            c2 = lo + 13   # suit 1 (offsuit)
+            hole = [c1, c2]
+
+            action = get_avg_policy_logits(policy, env, hole, samples=25)
+            matrix[i,j] = action
+
+
+    # ---------------------------------------------------------------------
+    # Build color grid
+    # ---------------------------------------------------------------------
+    color_grid = np.empty((13, 13), dtype=object)
+
     for i in range(13):
         for j in range(13):
-            if buckets[i][j]:
-                grid[i, j] = Counter(buckets[i][j]).most_common(1)[0][0]
+            action = matrix[i, j]
+            color_grid[i, j] = ACTION_COLORS[action]
 
-    plt.figure(figsize=(10, 9))
-    cmap = plt.get_cmap("viridis", 5)  # 5 discrete actions
+    rgb_grid = np.zeros((13, 13, 3))
+    for i in range(13):
+        for j in range(13):
+            rgb_grid[i, j] = mcolors.to_rgb(color_grid[i, j])
 
-    img = plt.imshow(grid, cmap=cmap, vmin=0, vmax=4)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(rgb_grid)
 
-    plt.xticks(range(13), GRID_RANKS)
-    plt.yticks(range(13), GRID_RANKS)
-    plt.xlabel("Second card")
-    plt.ylabel("First card")
-    plt.title("Bot Preflop Strategy (GTO-Style Heatmap)")
+    # annotate
+    for i in range(13):
+        for j in range(13):
+            ax.text(j, i, matrix[i, j],
+                    ha="center", va="center",
+                    fontsize=7, color="black")
 
-    cbar = plt.colorbar(img, ticks=[0, 1, 2, 3, 4])
-    cbar.ax.set_yticklabels(["FOLD", "CALL", "0.5P", "POT", "ALL-IN"])
+    ax.set_xticks(range(13))
+    ax.set_yticks(range(13))
+    ax.set_xticklabels(RANKS)
+    ax.set_yticklabels(RANKS)
+
+    ax.set_xlabel("Second card")
+    ax.set_ylabel("First card")
+    ax.set_title("REAL Preflop GTO-Style Action Chart (Deep CFR)")
 
     plt.tight_layout()
-    plt.savefig("preflop_heatmap.png", dpi=200)
+    plt.savefig("real_preflop_gto_chart50000.png", dpi=300)
     plt.show()
-
-# =====================================================
-# Simulation
-# =====================================================
-def simulate(n=3000):
-    env = SimpleHoldemEnv()
-    session = CashSession(env, starting_stacks=(200, 200))
-    policy = load_policy(env)
-
-    logger = init_logger()
-    for _ in range(n):
-        play_hand(policy, env, session, logger)
-
-    return logger
-
-
-# =====================================================
-# Main
-# =====================================================
-if __name__ == "__main__":
-    print("Running PRE-FLOP simulation and logging bot actions...")
-    logger = simulate(5000)
-    plot_heatmap(logger)    
-    print("Saved: hand_action_preflop_scatter.png")

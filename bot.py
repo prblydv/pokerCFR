@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------
+# File overview:
+#   bot.py bundles a lightweight SimpleHoldemEnv, neural nets, replay buffers,
+#   and DeepCFRTrainer demo. Run via `python bot.py` to execute `run_demo()`.
+# ---------------------------------------------------------------------------
+
 import math
 import random
 from collections import deque
@@ -59,11 +65,19 @@ class SimpleHoldemEnv:
     - Crude hand strength evaluator
     """
 
+    # Function metadata:
+    #   Inputs: stack_size, sb, bb  # dtype=varies
+    #   Sample:
+    #       sample_output = __init__(stack_size=100.0, sb=None, bb=None)  # dtype=Any
     def __init__(self, stack_size: float = 100.0, sb: float = 0.5, bb: float = 1.0):
         self.stack_size = stack_size
         self.sb = sb
         self.bb = bb
 
+    # Function metadata:
+    #   Inputs: no explicit parameters  # dtype=varies
+    #   Sample:
+    #       sample_output = new_hand()  # dtype=Any
     def new_hand(self):
         deck = list(range(52))
         RNG.shuffle(deck)
@@ -99,16 +113,28 @@ class SimpleHoldemEnv:
 
     # --- card and state encoding ---
 
+    # Function metadata:
+    #   Inputs: card  # dtype=varies
+    #   Sample:
+    #       sample_output = card_rank(card=None)  # dtype=Any
     @staticmethod
     def card_rank(card: int) -> int:
         # 0..12 repeated for 4 suits
         return card % 13
 
+    # Function metadata:
+    #   Inputs: hole, board  # dtype=varies
+    #   Sample:
+    #       sample_output = crude_strength(hole=[10, 23], board=[0, 1, 2])  # dtype=Any
     def crude_strength(self, hole: List[int], board: List[int]) -> float:
         # Very rough heuristic: sum of ranks of hole + board, normalized
         ranks = [self.card_rank(c) for c in hole + board]
         return sum(ranks) / (13.0 * 7.0)  # at most 7 cards at river
 
+    # Function metadata:
+    #   Inputs: s, player  # dtype=varies
+    #   Sample:
+    #       sample_output = encode_state(s=None, player=0)  # dtype=Any
     def encode_state(self, s: GameState, player: int) -> torch.Tensor:
         """Encode state into a fixed-size vector for networks."""
         # Street one-hot (4), player index (1), pot, stacks (2), current_bet (1),
@@ -138,6 +164,10 @@ class SimpleHoldemEnv:
 
     # --- game mechanics ---
 
+    # Function metadata:
+    #   Inputs: s  # dtype=varies
+    #   Sample:
+    #       sample_output = legal_actions(s=None)  # dtype=Any
     def legal_actions(self, s: GameState) -> List[int]:
         if s.terminal:
             return []
@@ -147,12 +177,20 @@ class SimpleHoldemEnv:
             actions += [ACTION_HALF_POT, ACTION_POT, ACTION_ALL_IN]
         return actions
 
+    # Function metadata:
+    #   Inputs: s  # dtype=varies
+    #   Sample:
+    #       sample_output = is_betting_round_over(s=None)  # dtype=Any
     def is_betting_round_over(self, s: GameState) -> bool:
         # Betting round ends when:
         # - last action was call/check and no one is facing a bet.
         # For simplicity: if current_bet == 0 and last_aggressor == -1.
         return s.current_bet == 0 and s.last_aggressor == -1
 
+    # Function metadata:
+    #   Inputs: s  # dtype=varies
+    #   Sample:
+    #       sample_output = deal_next_street(s=None)  # dtype=Any
     def deal_next_street(self, s: GameState) -> None:
         if s.street == STREET_PREFLOP:
             # flop: 3 cards
@@ -172,6 +210,10 @@ class SimpleHoldemEnv:
         s.current_bet = 0.0
         s.last_aggressor = -1
 
+    # Function metadata:
+    #   Inputs: s  # dtype=varies
+    #   Sample:
+    #       sample_output = resolve_showdown(s=None)  # dtype=Any
     def resolve_showdown(self, s: GameState) -> None:
         v0 = self.crude_strength(s.hole[0], s.board)
         v1 = self.crude_strength(s.hole[1], s.board)
@@ -182,6 +224,10 @@ class SimpleHoldemEnv:
             s.winner = 0 if v0 > v1 else 1
         s.terminal = True
 
+    # Function metadata:
+    #   Inputs: s, action  # dtype=varies
+    #   Sample:
+    #       sample_output = step(s=None, action=None)  # dtype=Any
     def step(self, s: GameState, action: int) -> GameState:
         if s.terminal:
             return s
@@ -251,6 +297,10 @@ class SimpleHoldemEnv:
 
         return s
 
+    # Function metadata:
+    #   Inputs: s, hero  # dtype=varies
+    #   Sample:
+    #       sample_output = terminal_payoff(s=None, hero=0)  # dtype=Any
     def terminal_payoff(self, s: GameState, hero: int) -> float:
         if not s.terminal:
             return 0.0
@@ -264,6 +314,10 @@ class SimpleHoldemEnv:
 # =====================
 
 class AdvantageNet(nn.Module):
+    # Function metadata:
+    #   Inputs: state_dim, num_actions  # dtype=varies
+    #   Sample:
+    #       sample_output = __init__(state_dim=None, num_actions=None)  # dtype=Any
     def __init__(self, state_dim: int, num_actions: int):
         super().__init__()
         self.net = nn.Sequential(
@@ -274,11 +328,19 @@ class AdvantageNet(nn.Module):
             nn.Linear(64, num_actions),
         )
 
+    # Function metadata:
+    #   Inputs: x  # dtype=varies
+    #   Sample:
+    #       sample_output = forward(x=None)  # dtype=Any
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
 
 class PolicyNet(nn.Module):
+    # Function metadata:
+    #   Inputs: state_dim, num_actions  # dtype=varies
+    #   Sample:
+    #       sample_output = __init__(state_dim=None, num_actions=None)  # dtype=Any
     def __init__(self, state_dim: int, num_actions: int):
         super().__init__()
         self.net = nn.Sequential(
@@ -289,6 +351,10 @@ class PolicyNet(nn.Module):
             nn.Linear(64, num_actions),
         )
 
+    # Function metadata:
+    #   Inputs: x  # dtype=varies
+    #   Sample:
+    #       sample_output = forward(x=None)  # dtype=Any
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         logits = self.net(x)
         return torch.log_softmax(logits, dim=-1)
@@ -299,12 +365,20 @@ class PolicyNet(nn.Module):
 # =====================
 
 class ReservoirBuffer:
+    # Function metadata:
+    #   Inputs: capacity, rng  # dtype=varies
+    #   Sample:
+    #       sample_output = __init__(capacity=None, rng=None)  # dtype=Any
     def __init__(self, capacity: int, rng: random.Random):
         self.capacity = capacity
         self.data = []
         self.n_seen = 0
         self.rng = rng
 
+    # Function metadata:
+    #   Inputs: sample  # dtype=varies
+    #   Sample:
+    #       sample_output = add(sample=None)  # dtype=Any
     def add(self, sample):
         self.n_seen += 1
         if len(self.data) < self.capacity:
@@ -314,9 +388,17 @@ class ReservoirBuffer:
             if idx < self.capacity:
                 self.data[idx] = sample
 
+    # Function metadata:
+    #   Inputs: batch_size  # dtype=varies
+    #   Sample:
+    #       sample_output = sample(batch_size=32)  # dtype=Any
     def sample(self, batch_size: int):
         return [self.rng.choice(self.data) for _ in range(batch_size)]
 
+    # Function metadata:
+    #   Inputs: no explicit parameters  # dtype=varies
+    #   Sample:
+    #       sample_output = __len__()  # dtype=Any
     def __len__(self):
         return len(self.data)
 
@@ -326,6 +408,10 @@ class ReservoirBuffer:
 # =====================
 
 class DeepCFRTrainer:
+    # Function metadata:
+    #   Inputs: env, state_dim  # dtype=varies
+    #   Sample:
+    #       sample_output = __init__(env=mock_env, state_dim=None)  # dtype=Any
     def __init__(self, env: SimpleHoldemEnv, state_dim: int):
         self.env = env
         self.state_dim = state_dim
@@ -352,6 +438,10 @@ class DeepCFRTrainer:
 
     # --- Strategy helpers ---
 
+    # Function metadata:
+    #   Inputs: advantages, legal_mask  # dtype=varies
+    #   Sample:
+    #       sample_output = regret_matching(advantages=None, legal_mask=None)  # dtype=Any
     def regret_matching(self, advantages: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
         # advantages shape: [A], legal_mask: [A] with 0/1
         adv = advantages.clone()
@@ -366,6 +456,10 @@ class DeepCFRTrainer:
             return probs
         return pos / total
 
+    # Function metadata:
+    #   Inputs: probs  # dtype=varies
+    #   Sample:
+    #       sample_output = sample_action(probs=None)  # dtype=Any
     def sample_action(self, probs: torch.Tensor) -> int:
         # probs is 1D tensor
         probs_np = probs.detach().cpu().numpy()
@@ -379,6 +473,10 @@ class DeepCFRTrainer:
 
     # --- CFR traversal (external sampling-like, simplified) ---
 
+    # Function metadata:
+    #   Inputs: state, player, reach_prob  # dtype=varies
+    #   Sample:
+    #       sample_output = traverse(state=mock_state, player=0, reach_prob=None)  # dtype=Any
     def traverse(self, state: GameState, player: int, reach_prob: float) -> float:
         """
         Returns value from 'player' perspective.
@@ -437,6 +535,10 @@ class DeepCFRTrainer:
 
     # --- Strategy sampling for policy network ---
 
+    # Function metadata:
+    #   Inputs: no explicit parameters  # dtype=varies
+    #   Sample:
+    #       sample_output = sample_strategy_trajectory()  # dtype=Any
     def sample_strategy_trajectory(self):
         """
         Generate samples for strategy buffer using current policy net.
@@ -467,6 +569,10 @@ class DeepCFRTrainer:
 
     # --- Training functions ---
 
+    # Function metadata:
+    #   Inputs: player, batch_size, epochs  # dtype=varies
+    #   Sample:
+    #       sample_output = train_advantage_net(player=0, batch_size=32, epochs=None)  # dtype=Any
     def train_advantage_net(self, player: int, batch_size: int = 64, epochs: int = 1):
         if len(self.adv_buffers[player]) < batch_size:
             return
@@ -489,6 +595,10 @@ class DeepCFRTrainer:
             loss.backward()
             opt.step()
 
+    # Function metadata:
+    #   Inputs: batch_size, epochs  # dtype=varies
+    #   Sample:
+    #       sample_output = train_policy_net(batch_size=32, epochs=None)  # dtype=Any
     def train_policy_net(self, batch_size: int = 64, epochs: int = 1):
         if len(self.strat_buffer) < batch_size:
             return
@@ -508,6 +618,10 @@ class DeepCFRTrainer:
 
     # --- Main Deep CFR loop ---
 
+    # Function metadata:
+    #   Inputs: num_iterations, traversals_per_iter, strat_samples_per_iter  # dtype=varies
+    #   Sample:
+    #       sample_output = train(num_iterations=10, traversals_per_iter=5, strat_samples_per_iter=5)  # dtype=Any
     def train(self, num_iterations: int = 2000,
               traversals_per_iter: int = 50,
               strat_samples_per_iter: int = 50):
@@ -530,6 +644,10 @@ class DeepCFRTrainer:
 
     # --- Play function (using policy net) ---
 
+    # Function metadata:
+    #   Inputs: state, player  # dtype=varies
+    #   Sample:
+    #       sample_output = choose_action(state=mock_state, player=0)  # dtype=Any
     def choose_action(self, state: GameState, player: int) -> int:
         env = self.env
         x = env.encode_state(state, player)
@@ -552,6 +670,10 @@ class DeepCFRTrainer:
 # 5) Demo: train + play
 # =====================
 
+# Function metadata:
+#   Inputs: no explicit parameters  # dtype=varies
+#   Sample:
+#       sample_output = run_demo()  # dtype=Any
 def run_demo():
     logger.info("Initializing SimpleHoldemEnv...")
     env = SimpleHoldemEnv()

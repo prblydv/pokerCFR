@@ -1,6 +1,7 @@
 # deep_cfr_trainer.py
 import math
 import random
+import time
 from typing import List
 
 import torch
@@ -15,6 +16,8 @@ from config import (
     ADV_LR,
     POLICY_LR,
     DEVICE,
+    RESUME_FROM_LAST,
+    CHECKPOINT_PATH,
 )
 from poker_env import SimpleHoldemEnv, GameState, NUM_ACTIONS
 from abstraction import encode_state
@@ -29,6 +32,8 @@ RNG = random.Random(RNG_SEED)
 
 
 class DeepCFRTrainer:
+    # Manages the entire Deep CFR workflow: holds env, networks, buffers, metrics,
+    # and exposes traversal/eval/train/save/load utilities consumed by run scripts.
     def __init__(self, env: SimpleHoldemEnv, state_dim: int):
         self.env = env
         self.state_dim = state_dim
@@ -57,9 +62,24 @@ class DeepCFRTrainer:
         self.adv_losses = []
         self.policy_losses = []
         self.eval_payoffs = []
+        self.iter_times = []
+
+        if RESUME_FROM_LAST:
+            try:
+                loaded = self.load_models(CHECKPOINT_PATH)
+                if loaded:
+                    logger.info(f"Resumed trainer from checkpoint at '{CHECKPOINT_PATH}'.")
+            except Exception:
+                logger.warning("Resume flag set but loading checkpoint failed; continuing fresh.", exc_info=True)
 
     # --- Helper methods ---
 
+    # Converts a vector of regrets/advantages into probabilities via standard
+    # regret matching (positive regrets normalized; fallback uniform). Used
+    # inside traverse() and sample_strategy_trajectory().
+    # Inputs: advantages (Tensor[A]), legal_mask (Tensor[A] 0/1).
+    # Output: Tensor[A] of probabilities (sum over legal actions = 1).
+    # Example: advantages=[-0.2,0.3,1.5], legal=[1,1,1] → probs=[0,0.167,0.833].
     @staticmethod
     def regret_matching(advantages: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
         adv = advantages.clone()
@@ -74,6 +94,11 @@ class DeepCFRTrainer:
             return probs
         return pos / total
 
+    # Samples an action index according to probability tensor probs. Used wherever
+    # we need randomized selections (opponent sampling, strategy trajectories).
+    # Inputs: probs Tensor[A] summing to 1.
+    # Output: int index (0..A-1).
+    # Example: probs=[0.2,0.5,0.3] → returns 1 with 50% chance.
     @staticmethod
     def sample_action(probs: torch.Tensor) -> int:
         probs_np = probs.detach().cpu().numpy()
@@ -87,6 +112,9 @@ class DeepCFRTrainer:
 
     # --- Deep CFR traversal (external sampling) ---
 
+    # Core CFR recursion. Takes a GameState and traverser id, returns utility from
+    # traverser perspective while pushing advantage samples to buffers. Uses
+    # external sampling (opponent actions sampled, traverser actions enumerated).
     def traverse(self, state: GameState, player: int) -> float:
         """
         External-sampling CFR:
@@ -152,6 +180,8 @@ class DeepCFRTrainer:
 
     # --- Strategy sampling ---
 
+    # Generates one on-policy trajectory using regret-matched policies to collect
+    # (state, probs, mask) tuples for policy training.
     def sample_strategy_trajectory(self):
         env = self.env
         s = env.new_hand()
@@ -174,6 +204,8 @@ class DeepCFRTrainer:
 
             probs = self.regret_matching(adv_values, mask)
             a = self.sample_action(probs)
+
+            # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1 why do we need this guard???????????????????/!!!!!!!!!!!
             if a not in legal_actions:
                 a = RNG.choice(legal_actions)
 
@@ -183,6 +215,8 @@ class DeepCFRTrainer:
 
     # --- Training steps ---
 
+    # Trains the specified player's advantage network using reservoir samples.
+    # Returns loss (float) or None if insufficient data.
     def train_advantage_net(self, player: int):
         if len(self.adv_buffers[player]) < BATCH_SIZE:
             return None
@@ -205,6 +239,8 @@ class DeepCFRTrainer:
 
         return loss.item()
 
+    # Trains shared policy network by minimizing KL divergence against sampled
+    # strategy distributions. Returns loss or None.
     def train_policy_net(self):
         if len(self.strat_buffer) < BATCH_SIZE:
             return None
@@ -235,6 +271,7 @@ class DeepCFRTrainer:
 
     # --- Evaluation (self-play) ---
 
+    # Runs num_hands games of self-play to estimate policy payoff (player 0).
     def eval_policy(self, num_hands=200):
         env = self.env
         total = 0
@@ -269,10 +306,13 @@ class DeepCFRTrainer:
 
     # --- Main training loop ---
 
+    # Main training loop: for each iteration perform traversals, update advantage
+    # nets, sample strategy trajectories, train policy, evaluate/log.
     def train(self, num_iterations: int,
               traversals_per_iter: int,
               strat_samples_per_iter: int):
         for it in range(1, num_iterations + 1):
+            iter_start_time = time.time()
             adv_losses_iter = []
 
             # Advantage learning for each player
@@ -292,25 +332,34 @@ class DeepCFRTrainer:
             if adv_losses_iter:
                 avg_adv_loss = sum(adv_losses_iter) / len(adv_losses_iter)
                 self.adv_losses.append(avg_adv_loss)
+            else:
+                avg_adv_loss = None
             if policy_loss is not None:
                 self.policy_losses.append(policy_loss)
 
-            # Periodic evaluation/logging
+            # Periodic evaluation/logging   
             if it % 1 == 0:
                 payoff = self.eval_policy(num_hands=100)
                 self.eval_payoffs.append(payoff)
+                iter_time = time.time() - iter_start_time
+                self.iter_times.append(iter_time)
+                adv_loss_str = f"{avg_adv_loss:.4f}" if avg_adv_loss is not None else "n/a"
+                policy_loss_str = f"{policy_loss:.4f}" if policy_loss is not None else "n/a"
                 logger.info(
                     f"Iter {it}: "
                     f"adv_buf0={len(self.adv_buffers[0])}, "
                     f"adv_buf1={len(self.adv_buffers[1])}, "
                     f"strat_buf={len(self.strat_buffer)}, "
-                    f"adv_loss={avg_adv_loss:.4f}, "
-                    f"policy_loss={policy_loss:.4f}, "
-                    f"eval_payoff_p0={payoff:.3f}"
+                    f"adv_loss={adv_loss_str}, "
+                    f"policy_loss={policy_loss_str}, "
+                    f"eval_payoff_p0={payoff:.3f}, "
+                    f"time={iter_time:.2f}s"
                 )
 
     # --- Saving / playing ---
 
+    # Serializes advantage/policy networks to disk (used after training or on
+    # signal handling). Files: adv_p0.pt, adv_p1.pt, policy.pt.
     def save_models(self, path: str = "models"):
         import os
         os.makedirs(path, exist_ok=True)
@@ -319,24 +368,74 @@ class DeepCFRTrainer:
         torch.save(self.policy_net.state_dict(), f"{path}/policy.pt")
         logger.info(f"Saved models to {path}/")
 
+    # Attempts to load saved weights for both advantage nets and the policy net.
+    # Returns True on success, False otherwise; used for checkpoint resume.
+    def load_models(self, path: str = "models") -> bool:
+        """Attempt to load model checkpoints from `path`.
+
+        Returns True if all models were found and loaded, False otherwise.
+        """
+        import os
+        if not os.path.isdir(path):
+            return False
+
+        try:
+            p0 = os.path.join(path, "adv_p0.pt")
+            p1 = os.path.join(path, "adv_p1.pt")
+            pol = os.path.join(path, "policy.pt")
+
+            if os.path.exists(p0) and os.path.exists(p1) and os.path.exists(pol):
+                self.adv_nets[0].load_state_dict(torch.load(p0, map_location=DEVICE))
+                self.adv_nets[1].load_state_dict(torch.load(p1, map_location=DEVICE))
+                self.policy_net.load_state_dict(torch.load(pol, map_location=DEVICE))
+
+                self.adv_nets[0].eval()
+                self.adv_nets[1].eval()
+                self.policy_net.eval()
+
+                logger.info(f"Loaded models from {path}/")
+                return True
+            logger.info(f"No complete checkpoint found in {path}/; starting from scratch")
+        except Exception as e:
+            logger.error(f"Error loading models from {path}: {e}", exc_info=True)
+
+        return False
+
+    # import torch
+    # import random
+
+    # Utility for inference: sample an action from the trained policy network for
+    # a given state/player (used by demo hand and deployments).
     def choose_action_policy(self, state: GameState, player: int) -> int:
-        from poker_env import NUM_ACTIONS  # local import
+        from poker_env import NUM_ACTIONS
 
         env = self.env
         x = encode_state(state, player).to(DEVICE)
+
         with torch.no_grad():
             logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
-        probs = torch.exp(logp)
+
+        probs = torch.exp(logp)  # If log-softmax output, else use torch.softmax(logp, -1)
+
         legal_actions = env.legal_actions(state)
         mask = torch.zeros(NUM_ACTIONS, dtype=torch.float32, device=DEVICE)
         mask[legal_actions] = 1.0
+
         probs = probs * mask
         total = probs.sum()
+
         if total.item() <= 0:
+            # Uniform random over legal actions
             probs = mask / mask.sum()
         else:
-            probs = probs / total
-        a = self.sample_action(probs)
+            probs = probs / total  # Renormalize
+
+        # MIXED STRATEGY: sample from the probability distribution
+        a = torch.multinomial(probs, 1).item()
+
         if a not in legal_actions:
             a = random.choice(legal_actions)
+
         return a
+
+

@@ -1,52 +1,67 @@
-class CashSession:
-    """
-    True cash-game session:
-    - stacks persist across hands
-    - correct pot/effective-stack accounting
-    - no negative stacks, no incorrect winnings
-    """
+# ---------------------------------------------------------------------------
+# File overview:
+#   cash_session.py tracks stacks for repeated hands with SimpleHoldemEnv.
+#   Import CashSession from CLI or interactive play scripts.
+# ---------------------------------------------------------------------------
 
-    def __init__(self, env, starting_stacks=(200.0, 200.0)):
+class CashSession:
+    # Function metadata:
+    #   Inputs: env, starting_stacks  # dtype=varies
+    #   Sample:
+    #       sample_output = __init__(env=mock_env, starting_stacks=None)  # dtype=Any
+    def __init__(self, env, starting_stacks=(200,200)):
         self.env = env
         self.session_stacks = list(starting_stacks)
-        self.total_hands = 0
 
+    # Function metadata:
+    #   Inputs: no explicit parameters  # dtype=varies
+    #   Sample:
+    #       sample_output = start_hand()  # dtype=Any
     def start_hand(self):
         """
-        Returns the GameState for a new hand.
-        Does NOT reset stacks — uses session_stacks.
+        Start a new cash-game hand.
+        We force the environment to use our session stacks.
         """
-        return self.env.new_hand_with_stacks(self.session_stacks)
+        # Let env create a fresh hand
+        s = self.env.new_hand()
 
-    def apply_results(self, state):
+        # Overwrite stacks to use session stacks
+        s.stacks = self.session_stacks[:]
 
-    # How much each player invested in this hand:
-        contrib0 = state.initial_stacks[0] - state.stacks[0]
-        contrib1 = state.initial_stacks[1] - state.stacks[1]
-        pot = contrib0 + contrib1
+        # Re-post blinds using correct players
+        sb = self.env.sb
+        bb = self.env.bb
 
-        # Winner is 0
-        if state.winner == 0:
-            self.session_stacks[0] = pot    # winner gets the entire pot
-            self.session_stacks[1] = 0      # loser busted
+        sbp = s.sb_player
+        bbp = s.bb_player
 
-        # Winner is 1
-        elif state.winner == 1:
-            self.session_stacks[1] = pot
-            self.session_stacks[0] = 0
+        s.stacks[sbp] -= sb
+        s.stacks[bbp] -= bb
 
-        # Split pot
-        else:
-            half = pot / 2.0
-            self.session_stacks[0] = half
-            self.session_stacks[1] = half
+        s.pot = sb + bb
+        s.current_bet = bb
+        s.last_aggressor = bbp
+        s.to_act = sbp
 
-        self.total_hands += 1
+        # Save for payoff calculation
+        s.initial_stacks = self.session_stacks[:]
 
+        return s
+
+    # Function metadata:
+    #   Inputs: final_state  # dtype=varies
+    #   Sample:
+    #       sample_output = apply_results(final_state=None)  # dtype=Any
+    def apply_results(self, final_state):
+        """
+        Update cash session stacks at the end of each hand.
+        session_stacks = final_state.stacks
+        """
+        self.session_stacks = final_state.stacks[:]
+
+    # Function metadata:
+    #   Inputs: no explicit parameters  # dtype=varies
+    #   Sample:
+    #       sample_output = get_stacks()  # dtype=Any
     def get_stacks(self):
         return tuple(self.session_stacks)
-
-    def reset(self, stacks=(200.0, 200.0)):
-        """Reset session manually."""
-        self.session_stacks = list(stacks)
-        self.total_hands = 0

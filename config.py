@@ -1,20 +1,34 @@
-# config.py
+# ---------------------------------------------------------------------------
+# File overview:
+#   config.py centralizes hyperparameters/constants for poker environment,
+#   Deep CFR, and hardware selection. Import it; not executable standalone.
+# ---------------------------------------------------------------------------
 import logging
 
 # Randomness
-RNG_SEED = 4294
+RNG_SEED = 4933444
 
 # Poker game parameters
 STACK_SIZE = 200.0
-SMALL_BLIND = 0.5
-BIG_BLIND = 1.0
+SMALL_BLIND = 1.0
+BIG_BLIND = 2.0
 
-# Actions: fold, call, 7 raise sizes, all-in
-NUM_ACTIONS = 10
+# Actons: fold, call, 7 raise sizes, all-in
+# FOLD
+# CALL
+# 2× Raise (min-open)
+# 2.25× Raise
+# 2.5× Raise
+# 3× Raise
+# 3.5× Raise
+# 4.5× Raise
+# 6× Raise
+# ALL-IN
+NUM_ACTIONS = 6
 
 # Deep CFR training parameters
-NUM_ITERATIONS = 1000          # increase for stronger bot
-TRAVERSALS_PER_ITER = 500
+NUM_ITERATIONS = 10000          # increase for stronger bot
+TRAVERSALS_PER_ITER = 5
 STRAT_SAMPLES_PER_ITER = 50
 
 ADV_BUFFER_CAPACITY = 500_000
@@ -24,8 +38,14 @@ BATCH_SIZE = 128
 ADV_LR = 1e-3
 POLICY_LR = 1e-3
 
+# Checkpointing
+RESUME_FROM_LAST = False
+CHECKPOINT_PATH = "models"
+AUTO_RESUME_ON_START = False
+
 # Logging & device
 LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
-DEVICE = "cuda"  # change to "cuda" if you have a GPU
+import torch
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
