@@ -7,6 +7,7 @@ import logging
 
 # Randomness
 RNG_SEED = 4933444
+DETERMINISTIC_SEED = 4933444  # set this to control global RNG behavior
 
 # Poker game parameters
 STACK_SIZE = 200.0

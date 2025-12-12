@@ -175,11 +175,12 @@ class DeepCFRTrainer:
                 for a in range(NUM_ACTIONS)
             ]
 
-            self.adv_buffers[player].add(
-                (x.cpu(),
-                 torch.tensor(advantages, dtype=torch.float32),
-                 legal_mask.cpu())
-            )
+            if len(self.adv_buffers[player]) < ADV_BUFFER_CAPACITY:
+                self.adv_buffers[player].add(
+                    (x.cpu(),
+                     torch.tensor(advantages, dtype=torch.float32),
+                     legal_mask.cpu())
+                )
 
             return node_val
         else:
@@ -315,6 +316,31 @@ class DeepCFRTrainer:
 
         return total / num_hands
 
+    def _mirror_state(self, state: GameState) -> GameState:
+        mirrored = GameState(
+            deck=state.deck[:],
+            board=state.board[:],
+            hole=[state.hole[1][:], state.hole[0][:]],
+            pot=state.pot,
+            to_act=1 - state.to_act,
+            street=state.street,
+            stacks=[state.stacks[1], state.stacks[0]],
+            current_bet=state.current_bet,
+            last_aggressor=(
+                1 - state.last_aggressor if state.last_aggressor in (0, 1) else state.last_aggressor
+            ),
+            sb_player=1 - state.sb_player,
+            bb_player=1 - state.bb_player,
+            initial_stacks=[state.initial_stacks[1], state.initial_stacks[0]],
+            contrib=[state.contrib[1], state.contrib[0]],
+            actions_this_street=state.actions_this_street,
+            terminal=state.terminal,
+            winner=(
+                1 - state.winner if state.terminal and state.winner in (0, 1) else state.winner
+            ),
+        )
+        return mirrored
+
     def _sample_policy_action(self, state: GameState, player: int, legal_actions: List[int]) -> int:
         x = encode_state(state, player).to(DEVICE)
         with torch.no_grad():
@@ -432,6 +458,8 @@ class DeepCFRTrainer:
                 for _ in range(traversals_per_iter):
                     s = self.env.new_hand()
                     self.traverse(s, p)
+                    mirror = self._mirror_state(s)
+                    self.traverse(mirror, p)
                 loss = self.train_advantage_net(p)
                 if loss is not None:
                     adv_losses_iter.append(loss)

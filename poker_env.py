@@ -91,18 +91,13 @@ class GameState:
 class SimpleHoldemEnv:
 
     def __init__(self,
-
                  stack_size: float = STACK_SIZE,
-
                  sb: float = SMALL_BLIND,
-
                  bb: float = BIG_BLIND):
-
         self.stack_size = stack_size
-
         self.sb = sb
-
         self.bb = bb
+        self._next_sb = RNG.randint(0, 1)
 
 
 
@@ -115,18 +110,11 @@ class SimpleHoldemEnv:
 
 
         h0 = [deck.pop(), deck.pop()]
-
         h1 = [deck.pop(), deck.pop()]
 
-
-
-        if RNG.random() < 0.5:
-
-            sb, bb = 0, 1
-
-        else:
-
-            sb, bb = 1, 0
+        sb = self._next_sb
+        bb = 1 - sb
+        self._next_sb = bb
 
 
 

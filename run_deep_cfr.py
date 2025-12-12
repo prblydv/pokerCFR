@@ -7,7 +7,10 @@ import logging
 import os
 import signal
 import sys
+import random
 
+import numpy as np
+import torch
 import matplotlib.pyplot as plt
 
 from config import (
@@ -18,6 +21,7 @@ from config import (
     STRAT_SAMPLES_PER_ITER,
     AUTO_RESUME_ON_START,
     CHECKPOINT_PATH,
+    DETERMINISTIC_SEED,
 )
 from poker_env import SimpleHoldemEnv
 from abstraction import encode_state
@@ -35,6 +39,14 @@ _trainer = None
 #       sample_output = setup_logging()  # dtype=Any
 def setup_logging():
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
+
+
+def set_global_seeds(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 # Function metadata:
@@ -136,6 +148,7 @@ def main():
     """Main training entry point with production error handling."""
     global _trainer
     setup_logging()
+    set_global_seeds(DETERMINISTIC_SEED)
     
     try:
         logger.info("="*60)

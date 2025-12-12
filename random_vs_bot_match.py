@@ -11,8 +11,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 import torch
+import numpy as np
 
-from config import DEVICE
+from config import DEVICE, DETERMINISTIC_SEED
 from poker_env import (
     SimpleHoldemEnv,
     ACTION_FOLD,
@@ -29,6 +30,9 @@ from networks import PolicyNet
 
 RAISE_ACTIONS = {ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN}
 MATCH_REPORT_INTERVAL = 50  # default report cadence for this script
+
+random.seed(DETERMINISTIC_SEED)
+np.random.seed(DETERMINISTIC_SEED)
 
 
 @dataclass
