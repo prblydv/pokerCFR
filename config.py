@@ -13,17 +13,7 @@ STACK_SIZE = 200.0
 SMALL_BLIND = 1.0
 BIG_BLIND = 2.0
 
-# Actons: fold, call, 7 raise sizes, all-in
-# FOLD
-# CALL
-# 2× Raise (min-open)
-# 2.25× Raise
-# 2.5× Raise
-# 3× Raise
-# 3.5× Raise
-# 4.5× Raise
-# 6× Raise
-# ALL-IN
+
 NUM_ACTIONS = 6
 
 # Deep CFR training parameters
@@ -37,6 +27,10 @@ STRAT_BUFFER_CAPACITY = 100_000
 BATCH_SIZE = 128
 ADV_LR = 1e-3
 POLICY_LR = 1e-3
+
+# Evaluation / reporting
+RANDOM_MATCH_INTERVAL = 5        # iterations between bot-vs-random evals during training
+RANDOM_MATCH_HANDS = 500          # hands per bot-vs-random evaluation
 
 # Checkpointing
 RESUME_FROM_LAST = False

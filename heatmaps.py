@@ -10,22 +10,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
-from poker_env import SimpleHoldemEnv
+from poker_env import (
+    SimpleHoldemEnv,
+    ACTION_FOLD,
+    ACTION_CHECK,
+    ACTION_CALL,
+    ACTION_RAISE_SMALL,
+    ACTION_RAISE_MEDIUM,
+    ACTION_ALL_IN,
+    NUM_ACTIONS,
+)
 from abstraction import encode_state
 from networks import PolicyNet
 
-# -- Action setup as before --
+# -- Action setup matches the new 6-action abstraction --
 ACTION_LABELS = {
-    0: "FOLD",
-    1: "CALL",
-    2: "2x",
-    3: "2.25x",
-    4: "2.5x",
-    5: "3x",
-    6: "3.5x",
-    7: "4.5x",
-    8: "6x",
-    9: "ALL-IN",
+    ACTION_FOLD: "FOLD",
+    ACTION_CHECK: "CHECK",
+    ACTION_CALL: "CALL",
+    ACTION_RAISE_SMALL: "RAISE SMALL",
+    ACTION_RAISE_MEDIUM: "RAISE MEDIUM",
+    ACTION_ALL_IN: "ALL-IN",
 }
 RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
 
@@ -59,7 +64,7 @@ def get_avg_policy_probs(policy, env, hole, samples=20, device="cpu"):
         else:
             probs_accum += p
     probs_accum /= samples
-    return probs_accum  # shape: (10,)
+    return probs_accum  # shape: (NUM_ACTIONS,)
 
 if __name__ == "__main__":
     env = SimpleHoldemEnv()
@@ -70,7 +75,7 @@ if __name__ == "__main__":
     policy.eval()
 
     # Build 3D array: (actions, 13, 13)
-    action_probs = np.zeros((10, 13, 13))
+    action_probs = np.zeros((NUM_ACTIONS, 13, 13))
     for i, r1 in enumerate(RANKS):
         for j, r2 in enumerate(RANKS):
             hi = 12 - i
@@ -79,15 +84,17 @@ if __name__ == "__main__":
             c2 = lo + 13
             hole = [c1, c2]
             probs = get_avg_policy_probs(policy, env, hole, samples=25)
-            for a in range(10):
+            for a in range(NUM_ACTIONS):
                 action_probs[a, i, j] = probs[a]
 
     # Plot a grid of heatmaps, one for each action
-    fig, axes = plt.subplots(2, 5, figsize=(20, 8))
+    rows = 2
+    cols = 3
+    fig, axes = plt.subplots(rows, cols, figsize=(18, 8))
     vmax = np.max(action_probs)  # to keep color scale consistent
 
     for idx, (a, label) in enumerate(ACTION_LABELS.items()):
-        ax = axes[idx // 5, idx % 5]
+        ax = axes[idx // cols, idx % cols]
         im = ax.imshow(action_probs[a], cmap="Reds", vmin=0, vmax=vmax)
         for i in range(13):
             for j in range(13):

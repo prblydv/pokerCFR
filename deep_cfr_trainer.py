@@ -18,8 +18,19 @@ from config import (
     DEVICE,
     RESUME_FROM_LAST,
     CHECKPOINT_PATH,
+    RANDOM_MATCH_INTERVAL,
+    RANDOM_MATCH_HANDS,
 )
-from poker_env import SimpleHoldemEnv, GameState, NUM_ACTIONS
+from poker_env import (
+    SimpleHoldemEnv,
+    GameState,
+    NUM_ACTIONS,
+    ACTION_CALL,
+    ACTION_RAISE_SMALL,
+    ACTION_RAISE_MEDIUM,
+    ACTION_ALL_IN,
+    STREET_PREFLOP,
+)
 from abstraction import encode_state
 from networks import AdvantageNet, PolicyNet, move_to_device
 from replay_buffer import ReservoirBuffer
@@ -29,6 +40,7 @@ import logging
 logger = logging.getLogger("DeepCFR")
 
 RNG = random.Random(RNG_SEED)
+RAISE_ACTIONS = {ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN}
 
 
 class DeepCFRTrainer:
@@ -303,6 +315,106 @@ class DeepCFRTrainer:
 
         return total / num_hands
 
+    def _sample_policy_action(self, state: GameState, player: int, legal_actions: List[int]) -> int:
+        x = encode_state(state, player).to(DEVICE)
+        with torch.no_grad():
+            logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
+
+        mask = torch.full((NUM_ACTIONS,), -1e9, device=logp.device)
+        for a in legal_actions:
+            mask[a] = 0.0
+
+        probs = torch.softmax(logp + mask, dim=-1)
+        action = torch.multinomial(probs, 1).item()
+        if action not in legal_actions:
+            action = RNG.choice(legal_actions)
+        return action
+
+    def eval_vs_random(self, num_hands: int = RANDOM_MATCH_HANDS):
+        env = self.env
+        stats = {
+            0: {"hands": 0, "wins": 0, "vpip": 0, "pfr": 0, "aggr": 0, "calls": 0, "actions": 0, "payoff": 0.0},
+            1: {"hands": 0, "wins": 0, "vpip": 0, "pfr": 0, "aggr": 0, "calls": 0, "actions": 0, "payoff": 0.0},
+        }
+
+        for _ in range(num_hands):
+            s = env.new_hand()
+            hand_flags = {
+                0: {"vpip": False, "pfr": False, "aggr": 0, "calls": 0, "actions": 0},
+                1: {"vpip": False, "pfr": False, "aggr": 0, "calls": 0, "actions": 0},
+            }
+
+            while not s.terminal:
+                legal = env.legal_actions(s)
+                if not legal:
+                    break
+                player = s.to_act
+                if player == 0:
+                    action = RNG.choice(legal)
+                else:
+                    action = self._sample_policy_action(s, player, legal)
+
+                info = hand_flags[player]
+                info["actions"] += 1
+
+                if s.street == STREET_PREFLOP:
+                    if action == ACTION_CALL or action in RAISE_ACTIONS:
+                        info["vpip"] = True
+                    if action in RAISE_ACTIONS:
+                        info["pfr"] = True
+
+                if action in RAISE_ACTIONS:
+                    info["aggr"] += 1
+                elif action == ACTION_CALL:
+                    info["calls"] += 1
+
+                s = env.step(s, action)
+
+            winner = s.winner
+            for player in (0, 1):
+                stats[player]["hands"] += 1
+                if winner == player:
+                    stats[player]["wins"] += 1
+                if hand_flags[player]["vpip"]:
+                    stats[player]["vpip"] += 1
+                if hand_flags[player]["pfr"]:
+                    stats[player]["pfr"] += 1
+                stats[player]["aggr"] += hand_flags[player]["aggr"]
+                stats[player]["calls"] += hand_flags[player]["calls"]
+                stats[player]["actions"] += hand_flags[player]["actions"]
+            stats[0]["payoff"] += env.terminal_payoff(s, 0)
+            stats[1]["payoff"] += env.terminal_payoff(s, 1)
+
+        def summarize(player_stats):
+            hands = max(player_stats["hands"], 1)
+            win_pct = 100.0 * player_stats["wins"] / hands
+            vpip_pct = 100.0 * player_stats["vpip"] / hands
+            pfr_pct = 100.0 * player_stats["pfr"] / hands
+            calls = player_stats["calls"]
+            aggr = player_stats["aggr"]
+            if calls == 0:
+                af = float("inf") if aggr > 0 else 0.0
+            else:
+                af = aggr / calls
+            avg_actions = player_stats["actions"] / hands
+            ev = player_stats["payoff"] / hands
+            return {
+                "win_pct": win_pct,
+                "vpip_pct": vpip_pct,
+                "pfr_pct": pfr_pct,
+                "af": af,
+                "avg_actions": avg_actions,
+                "hands": hands,
+                "ev": ev,
+            }
+
+        return {
+            "random": summarize(stats[0]),
+            "bot": summarize(stats[1]),
+        }
+
+    ...
+
 
     # --- Main training loop ---
 
@@ -337,7 +449,7 @@ class DeepCFRTrainer:
             if policy_loss is not None:
                 self.policy_losses.append(policy_loss)
 
-            # Periodic evaluation/logging   
+            # Periodic evaluation/logging
             if it % 1 == 0:
                 payoff = self.eval_policy(num_hands=100)
                 self.eval_payoffs.append(payoff)
@@ -354,6 +466,20 @@ class DeepCFRTrainer:
                     f"policy_loss={policy_loss_str}, "
                     f"eval_payoff_p0={payoff:.3f}, "
                     f"time={iter_time:.2f}s"
+                )
+
+            if RANDOM_MATCH_INTERVAL > 0 and it % RANDOM_MATCH_INTERVAL == 0:
+                match_stats = self.eval_vs_random(num_hands=RANDOM_MATCH_HANDS)
+                bot = match_stats["bot"]
+                rnd = match_stats["random"]
+                def fmt_af(value):
+                    return "inf" if value == float("inf") else f"{value:.2f}"
+                logger.info(
+                    f"[RandomMatch] iter {it}: "
+                    f"bot_win%={bot['win_pct']:.1f}, bot_VPIP%={bot['vpip_pct']:.1f}, "
+                    f"bot_PFR%={bot['pfr_pct']:.1f}, bot_EV={bot['ev']:.2f}, bot_AF={fmt_af(bot['af'])}; "
+                    f"random_win%={rnd['win_pct']:.1f}, random_VPIP%={rnd['vpip_pct']:.1f}, "
+                    f"random_PFR%={rnd['pfr_pct']:.1f}, random_EV={rnd['ev']:.2f}, random_AF={fmt_af(rnd['af'])}"
                 )
 
     # --- Saving / playing ---
