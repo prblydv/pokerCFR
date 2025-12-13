@@ -22,6 +22,8 @@ from config import (
     AUTO_RESUME_ON_START,
     CHECKPOINT_PATH,
     DETERMINISTIC_SEED,
+    PRETRAIN_RANDOM_EVAL,
+    PRETRAIN_RANDOM_EVAL_HANDS,
 )
 from poker_env import SimpleHoldemEnv
 from abstraction import encode_state
@@ -54,25 +56,33 @@ def set_global_seeds(seed: int):
 #   Sample:
 #       sample_output = plot_training_curves(trainer=None, out_path=None)  # dtype=Any
 def plot_training_curves(trainer: DeepCFRTrainer, out_path: str = "training_curves.png"):
-    fig, ax1 = plt.subplots()
+    """Render separate subplots for advantage loss, policy loss, and eval payoffs."""
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=False)
 
-    ax1.set_xlabel("Iteration")
-    ax1.set_ylabel("Loss")
+    # Advantage loss subplot
+    ax_adv = axes[0]
     if trainer.adv_losses:
         adv_x = list(range(1, len(trainer.adv_losses) + 1))
-        ax1.plot(adv_x, trainer.adv_losses, label="Advantage loss")
+        ax_adv.plot(adv_x, trainer.adv_losses, label="Advantage loss", color="tab:blue")
+    ax_adv.set_ylabel("Adv loss")
+    ax_adv.legend(loc="upper right")
+
+    # Policy loss subplot
+    ax_pol = axes[1]
     if trainer.policy_losses:
         pol_x = list(range(1, len(trainer.policy_losses) + 1))
-        ax1.plot(pol_x, trainer.policy_losses, label="Policy loss")
-    if trainer.adv_losses or trainer.policy_losses:
-        ax1.legend(loc="upper left")
+        ax_pol.plot(pol_x, trainer.policy_losses, label="Policy loss", color="tab:orange")
+    ax_pol.set_ylabel("Policy loss")
+    ax_pol.legend(loc="upper right")
 
+    # Eval payoff subplot
+    ax_eval = axes[2]
     if trainer.eval_payoffs:
-        ax2 = ax1.twinx()
-        ax2.set_ylabel("Avg payoff P0")
         eval_x = list(range(1, len(trainer.eval_payoffs) + 1))
-        ax2.plot(eval_x, trainer.eval_payoffs, color="green", label="Eval payoff P0")
-        ax2.legend(loc="upper right")
+        ax_eval.plot(eval_x, trainer.eval_payoffs, label="Eval payoff P0", color="tab:green")
+    ax_eval.set_ylabel("P0 payoff")
+    ax_eval.set_xlabel("Iteration")
+    ax_eval.legend(loc="upper right")
 
     fig.tight_layout()
     plt.savefig(out_path)
@@ -172,6 +182,23 @@ def main():
                     logger.info("Resumed trainer from existing checkpoints.")
             except Exception:
                 logger.warning("Auto-resume failed; starting fresh.", exc_info=True)
+
+        if PRETRAIN_RANDOM_EVAL and trainer.loaded_from_checkpoint:
+            try:
+                stats = trainer.eval_vs_random(num_hands=PRETRAIN_RANDOM_EVAL_HANDS)
+                bot = stats["bot"]
+                rnd = stats["random"]
+                def fmt_af(value):
+                    return "inf" if value == float("inf") else f"{value:.2f}"
+                logger.info(
+                    "[PreTrainEval] "
+                    f"bot_win%={bot['win_pct']:.1f}, bot_VPIP%={bot['vpip_pct']:.1f}, "
+                    f"bot_PFR%={bot['pfr_pct']:.1f}, bot_EV={bot['ev']:.2f}, bot_AF={fmt_af(bot['af'])}; "
+                    f"random_win%={rnd['win_pct']:.1f}, random_VPIP%={rnd['vpip_pct']:.1f}, "
+                    f"random_PFR%={rnd['pfr_pct']:.1f}, random_EV={rnd['ev']:.2f}, random_AF={fmt_af(rnd['af'])}"
+                )
+            except Exception:
+                logger.warning("Pre-training random evaluation failed.", exc_info=True)
         # Register signal handler for graceful shutdown
         signal.signal(signal.SIGINT, signal_handler)
         
@@ -201,7 +228,14 @@ def main():
         logger.info("="*60)
         
     except KeyboardInterrupt:
-        logger.warning("Training interrupted by user.")
+        logger.warning("Training interrupted by user. Saving checkpoints before exit...")
+        if _trainer is not None:
+            try:
+                _trainer.save_models()
+                plot_training_curves(_trainer)
+                logger.info("Models and plots saved after interrupt.")
+            except Exception as e:
+                logger.error(f"Error while saving during interrupt: {e}", exc_info=True)
         sys.exit(0)
     except Exception as e:
         logger.error(f"Fatal error during training: {e}", exc_info=True)

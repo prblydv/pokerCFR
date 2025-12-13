@@ -24,6 +24,7 @@ STRAT_SAMPLES_PER_ITER = 50
 
 ADV_BUFFER_CAPACITY = 500_000
 STRAT_BUFFER_CAPACITY = 100_000
+ADV_BUFFER_BALANCE_GAP = 20_000
 
 BATCH_SIZE = 128
 ADV_LR = 1e-3
@@ -32,6 +33,8 @@ POLICY_LR = 1e-3
 # Evaluation / reporting
 RANDOM_MATCH_INTERVAL = 5        # iterations between bot-vs-random evals during training
 RANDOM_MATCH_HANDS = 500          # hands per bot-vs-random evaluation
+PRETRAIN_RANDOM_EVAL = True       # run eval_vs_random before training if resuming
+PRETRAIN_RANDOM_EVAL_HANDS = 1000
 
 # Checkpointing
 RESUME_FROM_LAST = False

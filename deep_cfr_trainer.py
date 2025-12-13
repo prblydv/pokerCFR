@@ -11,6 +11,7 @@ import torch.optim as optim
 from config import (
     RNG_SEED,
     ADV_BUFFER_CAPACITY,
+    ADV_BUFFER_BALANCE_GAP,
     STRAT_BUFFER_CAPACITY,
     BATCH_SIZE,
     ADV_LR,
@@ -75,12 +76,14 @@ class DeepCFRTrainer:
         self.policy_losses = []
         self.eval_payoffs = []
         self.iter_times = []
+        self.loaded_from_checkpoint = False
 
         if RESUME_FROM_LAST:
             try:
                 loaded = self.load_models(CHECKPOINT_PATH)
                 if loaded:
                     logger.info(f"Resumed trainer from checkpoint at '{CHECKPOINT_PATH}'.")
+                    self.loaded_from_checkpoint = True
             except Exception:
                 logger.warning("Resume flag set but loading checkpoint failed; continuing fresh.", exc_info=True)
 
@@ -121,6 +124,19 @@ class DeepCFRTrainer:
             if r <= cum:
                 return i
         return len(probs_np) - 1
+    
+    def _can_store_adv_sample(self, player: int) -> bool:
+        """
+        Prevent one advantage buffer from racing far ahead of the other by
+        enforcing a max length gap (ADV_BUFFER_BALANCE_GAP).
+        """
+        current_len = len(self.adv_buffers[player])
+        if current_len >= ADV_BUFFER_CAPACITY:
+            return False
+        other_len = len(self.adv_buffers[1 - player])
+        if current_len - other_len >= ADV_BUFFER_BALANCE_GAP:
+            return False
+        return True
 
     # --- Deep CFR traversal (external sampling) ---
 
@@ -176,11 +192,12 @@ class DeepCFRTrainer:
             ]
 
             if len(self.adv_buffers[player]) < ADV_BUFFER_CAPACITY:
-                self.adv_buffers[player].add(
-                    (x.cpu(),
-                     torch.tensor(advantages, dtype=torch.float32),
-                     legal_mask.cpu())
-                )
+                if self._can_store_adv_sample(player):
+                    self.adv_buffers[player].add(
+                        (x.cpu(),
+                         torch.tensor(advantages, dtype=torch.float32),
+                         legal_mask.cpu())
+                    )
 
             return node_val
         else:
@@ -548,6 +565,7 @@ class DeepCFRTrainer:
                 self.policy_net.eval()
 
                 logger.info(f"Loaded models from {path}/")
+                self.loaded_from_checkpoint = True
                 return True
             logger.info(f"No complete checkpoint found in {path}/; starting from scratch")
         except Exception as e:
@@ -591,5 +609,3 @@ class DeepCFRTrainer:
             a = random.choice(legal_actions)
 
         return a
-
-

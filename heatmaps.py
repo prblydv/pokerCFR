@@ -34,6 +34,29 @@ ACTION_LABELS = {
 }
 RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
 
+
+def make_card(rank_idx: int, suit_idx: int) -> int:
+    """Encode a card index given rank (0=2 .. 12=A) and suit (0..3)."""
+    return suit_idx * 13 + rank_idx
+
+
+def grid_hole_from_indices(row: int, col: int):
+    """
+    Return a hole-card pair for the (row, col) entry of the heatmap grid.
+    Above diagonal -> suited combos, below -> offsuit, diagonal -> pairs.
+    """
+    rank_row = 12 - row
+    rank_col = 12 - col
+
+    if row == col:
+        # Pocket pair: use two different suits for the same rank.
+        return [make_card(rank_row, 0), make_card(rank_col, 1)]
+    if col > row:
+        # Above diagonal => suited combos (same suit, different ranks).
+        return [make_card(rank_row, 0), make_card(rank_col, 0)]
+    # Below diagonal => offsuit combos (different suits).
+    return [make_card(rank_row, 0), make_card(rank_col, 1)]
+
 # Function metadata:
 #   Inputs: env (SimpleHoldemEnv), hole (List[int] len 2)  # dtype=(SimpleHoldemEnv, List[int])
 #   Sample:
@@ -76,13 +99,9 @@ if __name__ == "__main__":
 
     # Build 3D array: (actions, 13, 13)
     action_probs = np.zeros((NUM_ACTIONS, 13, 13))
-    for i, r1 in enumerate(RANKS):
-        for j, r2 in enumerate(RANKS):
-            hi = 12 - i
-            lo = 12 - j
-            c1 = hi
-            c2 = lo + 13
-            hole = [c1, c2]
+    for i, _ in enumerate(RANKS):
+        for j, _ in enumerate(RANKS):
+            hole = grid_hole_from_indices(i, j)
             probs = get_avg_policy_probs(policy, env, hole, samples=25)
             for a in range(NUM_ACTIONS):
                 action_probs[a, i, j] = probs[a]
