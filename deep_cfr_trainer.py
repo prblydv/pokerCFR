@@ -131,12 +131,8 @@ class DeepCFRTrainer:
         enforcing a max length gap (ADV_BUFFER_BALANCE_GAP).
         """
         current_len = len(self.adv_buffers[player])
-        if current_len >= ADV_BUFFER_CAPACITY:
-            return False
         other_len = len(self.adv_buffers[1 - player])
-        if current_len - other_len >= ADV_BUFFER_BALANCE_GAP:
-            return False
-        return True
+        return (current_len - other_len) < ADV_BUFFER_BALANCE_GAP
 
     # --- Deep CFR traversal (external sampling) ---
 
@@ -191,13 +187,12 @@ class DeepCFRTrainer:
                 for a in range(NUM_ACTIONS)
             ]
 
-            if len(self.adv_buffers[player]) < ADV_BUFFER_CAPACITY:
-                if self._can_store_adv_sample(player):
-                    self.adv_buffers[player].add(
-                        (x.cpu(),
-                         torch.tensor(advantages, dtype=torch.float32),
-                         legal_mask.cpu())
-                    )
+            if self._can_store_adv_sample(player):
+                self.adv_buffers[player].add(
+                    (x.cpu(),
+                     torch.tensor(advantages, dtype=torch.float32),
+                     legal_mask.cpu())
+                )
 
             return node_val
         else:
@@ -476,7 +471,7 @@ class DeepCFRTrainer:
                     s = self.env.new_hand()
                     self.traverse(s, p)
                     mirror = self._mirror_state(s)
-                    self.traverse(mirror, p)
+                    self.traverse(mirror, 1 - p)
                 loss = self.train_advantage_net(p)
                 if loss is not None:
                     adv_losses_iter.append(loss)
