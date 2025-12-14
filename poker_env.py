@@ -54,10 +54,6 @@ STREET_FLOP = 1
 STREET_TURN = 2
 STREET_RIVER = 3
 
-
-
-
-
 # ---------------------------------------------------------
 
 # GameState (same API)
@@ -377,13 +373,11 @@ class SimpleHoldemEnv:
         if action == ACTION_CHECK:
 
             if to_call > 0:
-
+                print("[ERROR]: ]Illegal CHECK action when there is an amount to call.")
                 return s
 
             s.to_act = opp
-
             self._maybe_advance_round(s)
-
             return s
 
 
@@ -553,10 +547,13 @@ class SimpleHoldemEnv:
         p = s.to_act
 
         to_call = self._amount_to_call(s, p)
+        # print("[DEBUG]: S.TOACT, ACTION, TOCALL",s.to_act,action, to_call)
 
         if s.street == STREET_PREFLOP:
-
-            base_size = PREFLOP_RAISE_MULT[action] * self.bb
+            if to_call <= 1 + 1e-9:
+                base_size = PREFLOP_RAISE_MULT[action] * self.bb
+            else:
+                base_size = PREFLOP_RAISE_MULT[action] * to_call
 
         else:
 
@@ -573,7 +570,6 @@ class SimpleHoldemEnv:
             return base_size
 
         return to_call + base_size
-
 
 
     def _invest(self, s: GameState, p: int, amount: float) -> float:
