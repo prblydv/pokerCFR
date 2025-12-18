@@ -167,6 +167,7 @@ def main():
         
         logger.info("Initializing environment...")
         env = SimpleHoldemEnv()
+        logger.info(f"Using {getattr(env, 'num_players', 2)} players.")
         example_state = env.new_hand()
         from abstraction import encode_state as enc
         state_dim = enc(example_state, player=0).shape[0]

@@ -2,6 +2,8 @@
 import math
 import random
 import time
+import collections
+import os
 from typing import List
 
 import torch
@@ -16,6 +18,8 @@ from config import (
     BATCH_SIZE,
     ADV_LR,
     POLICY_LR,
+    ADV_UPDATES_PER_ITER,
+    POLICY_UPDATES_PER_ITER,
     DEVICE,
     RESUME_FROM_LAST,
     CHECKPOINT_PATH,
@@ -42,6 +46,9 @@ logger = logging.getLogger("DeepCFR")
 
 RNG = random.Random(RNG_SEED)
 RAISE_ACTIONS = {ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN}
+EPS_EXPLOIT = 0.15
+CONFIDENCE_THRESH = 0.7
+OVERBET_BOOST = 1.2
 
 
 class DeepCFRTrainer:
@@ -50,24 +57,23 @@ class DeepCFRTrainer:
     def __init__(self, env: SimpleHoldemEnv, state_dim: int):
         self.env = env
         self.state_dim = state_dim
+        self.num_players = getattr(env, "num_players", 2)
 
         # One advantage net per player
         self.adv_nets: List[AdvantageNet] = [
-            move_to_device(AdvantageNet(state_dim)),
-            move_to_device(AdvantageNet(state_dim)),
+            move_to_device(AdvantageNet(state_dim)) for _ in range(self.num_players)
         ]
         self.adv_opts = [
-            optim.Adam(self.adv_nets[0].parameters(), lr=ADV_LR),
-            optim.Adam(self.adv_nets[1].parameters(), lr=ADV_LR),
+            optim.Adam(net.parameters(), lr=ADV_LR) for net in self.adv_nets
         ]
 
         # Shared policy net (average strategy)
         self.policy_net: PolicyNet = move_to_device(PolicyNet(state_dim))
         self.policy_opt = optim.Adam(self.policy_net.parameters(), lr=POLICY_LR)
+        self.policy_snapshots = collections.deque(maxlen=3)  # keep last few policy copies for eval
 
         self.adv_buffers = [
-            ReservoirBuffer(ADV_BUFFER_CAPACITY, RNG),
-            ReservoirBuffer(ADV_BUFFER_CAPACITY, RNG),
+            ReservoirBuffer(ADV_BUFFER_CAPACITY, RNG) for _ in range(self.num_players)
         ]
         self.strat_buffer = ReservoirBuffer(STRAT_BUFFER_CAPACITY, RNG)
 
@@ -77,6 +83,8 @@ class DeepCFRTrainer:
         self.eval_payoffs = []
         self.iter_times = []
         self.loaded_from_checkpoint = False
+        self._snapshot_policy_state()
+        self._snapshot_policy_state()
 
         if RESUME_FROM_LAST:
             try:
@@ -131,8 +139,11 @@ class DeepCFRTrainer:
         enforcing a max length gap (ADV_BUFFER_BALANCE_GAP).
         """
         current_len = len(self.adv_buffers[player])
-        other_len = len(self.adv_buffers[1 - player])
-        return (current_len - other_len) < ADV_BUFFER_BALANCE_GAP
+        other_lens = [len(buf) for idx, buf in enumerate(self.adv_buffers) if idx != player]
+        if not other_lens:
+            return True
+        min_len = min(other_lens)
+        return (current_len - min_len) < ADV_BUFFER_BALANCE_GAP
 
     # --- Deep CFR traversal (external sampling) ---
 
@@ -358,6 +369,8 @@ class DeepCFRTrainer:
         with torch.no_grad():
             logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
 
+        if not legal_actions:
+            return 0
         mask = torch.full((NUM_ACTIONS,), -1e9, device=logp.device)
         for a in legal_actions:
             mask[a] = 0.0
@@ -371,15 +384,15 @@ class DeepCFRTrainer:
     def eval_vs_random(self, num_hands: int = RANDOM_MATCH_HANDS):
         env = self.env
         stats = {
-            0: {"hands": 0, "wins": 0, "vpip": 0, "pfr": 0, "aggr": 0, "calls": 0, "actions": 0, "payoff": 0.0},
-            1: {"hands": 0, "wins": 0, "vpip": 0, "pfr": 0, "aggr": 0, "calls": 0, "actions": 0, "payoff": 0.0},
+            pid: {"hands": 0, "wins": 0, "vpip": 0, "pfr": 0, "aggr": 0, "calls": 0, "actions": 0, "payoff": 0.0}
+            for pid in range(self.num_players)
         }
 
         for _ in range(num_hands):
             s = env.new_hand()
             hand_flags = {
-                0: {"vpip": False, "pfr": False, "aggr": 0, "calls": 0, "actions": 0},
-                1: {"vpip": False, "pfr": False, "aggr": 0, "calls": 0, "actions": 0},
+                pid: {"vpip": False, "pfr": False, "aggr": 0, "calls": 0, "actions": 0}
+                for pid in range(self.num_players)
             }
 
             while not s.terminal:
@@ -409,7 +422,7 @@ class DeepCFRTrainer:
                 s = env.step(s, action)
 
             winner = s.winner
-            for player in (0, 1):
+            for player in range(self.num_players):
                 stats[player]["hands"] += 1
                 if winner == player:
                     stats[player]["wins"] += 1
@@ -446,10 +459,7 @@ class DeepCFRTrainer:
                 "ev": ev,
             }
 
-        return {
-            "random": summarize(stats[0]),
-            "bot": summarize(stats[1]),
-        }
+        return {"players": {pid: summarize(stats[pid]) for pid in stats}}
 
     ...
 
@@ -466,28 +476,31 @@ class DeepCFRTrainer:
             adv_losses_iter = []
 
             # Advantage learning for each player
-            for p in [0, 1]:
+            for p in range(self.num_players):
                 for _ in range(traversals_per_iter):
                     s = self.env.new_hand()
                     self.traverse(s, p)
-                    mirror = self._mirror_state(s)
-                    self.traverse(mirror, 1 - p)
-                loss = self.train_advantage_net(p)
-                if loss is not None:
-                    adv_losses_iter.append(loss)
+                for _ in range(ADV_UPDATES_PER_ITER):
+                    loss = self.train_advantage_net(p)
+                    if loss is not None:
+                        adv_losses_iter.append(loss)
 
             # Strategy sampling
             for _ in range(strat_samples_per_iter):
                 self.sample_strategy_trajectory()
-            policy_loss = self.train_policy_net()
+            policy_loss = None
+            for _ in range(POLICY_UPDATES_PER_ITER):
+                pl = self.train_policy_net()
+                if pl is not None:
+                    policy_loss = pl  # track last non-None
+            if policy_loss is not None:
+                self.policy_losses.append(policy_loss)
 
             if adv_losses_iter:
                 avg_adv_loss = sum(adv_losses_iter) / len(adv_losses_iter)
                 self.adv_losses.append(avg_adv_loss)
             else:
                 avg_adv_loss = None
-            if policy_loss is not None:
-                self.policy_losses.append(policy_loss)
 
             # Periodic evaluation/logging
             if it % 1 == 0:
@@ -497,30 +510,41 @@ class DeepCFRTrainer:
                 self.iter_times.append(iter_time)
                 adv_loss_str = f"{avg_adv_loss:.4f}" if avg_adv_loss is not None else "n/a"
                 policy_loss_str = f"{policy_loss:.4f}" if policy_loss is not None else "n/a"
+                buf_sizes = ",".join(str(len(buf)) for buf in self.adv_buffers)
                 logger.info(
                     f"Iter {it}: "
-                    f"adv_buf0={len(self.adv_buffers[0])}, "
-                    f"adv_buf1={len(self.adv_buffers[1])}, "
-                    f"strat_buf={len(self.strat_buffer)}, "
-                    f"adv_loss={adv_loss_str}, "
-                    f"policy_loss={policy_loss_str}, "
-                    f"eval_payoff_p0={payoff:.3f}, "
-                    f"time={iter_time:.2f}s"
+                    f"adv_bufs=[{buf_sizes}], strat_buf={len(self.strat_buffer)}, "
+                    f"adv_loss={adv_loss_str}, policy_loss={policy_loss_str}, "
+                    f"eval_payoff_p0={payoff:.3f}, time={iter_time:.2f}s"
                 )
 
             if RANDOM_MATCH_INTERVAL > 0 and it % RANDOM_MATCH_INTERVAL == 0:
                 match_stats = self.eval_vs_random(num_hands=RANDOM_MATCH_HANDS)
-                bot = match_stats["bot"]
-                rnd = match_stats["random"]
-                def fmt_af(value):
-                    return "inf" if value == float("inf") else f"{value:.2f}"
-                logger.info(
-                    f"[RandomMatch] iter {it}: "
-                    f"bot_win%={bot['win_pct']:.1f}, bot_VPIP%={bot['vpip_pct']:.1f}, "
-                    f"bot_PFR%={bot['pfr_pct']:.1f}, bot_EV={bot['ev']:.2f}, bot_AF={fmt_af(bot['af'])}; "
-                    f"random_win%={rnd['win_pct']:.1f}, random_VPIP%={rnd['vpip_pct']:.1f}, "
-                    f"random_PFR%={rnd['pfr_pct']:.1f}, random_EV={rnd['ev']:.2f}, random_AF={fmt_af(rnd['af'])}"
-                )
+                for pid, summary in match_stats["players"].items():
+                    def fmt_af(value):
+                        return "inf" if value == float("inf") else f"{value:.2f}"
+                    logger.info(
+                        f"[RandomMatch] iter {it} player {pid}: "
+                        f"win%={summary['win_pct']:.1f}, VPIP%={summary['vpip_pct']:.1f}, "
+                        f"PFR%={summary['pfr_pct']:.1f}, EV={summary['ev']:.2f}, AF={fmt_af(summary['af'])}"
+                    )
+                if self.policy_snapshots:
+                    prev = self.policy_snapshots[-1]
+                    vs_prev = self.eval_vs_policy(prev, num_hands=RANDOM_MATCH_HANDS)
+                    logger.info(
+                        f"[SelfPlayEval] iter {it}: vs_prev_bb/100={vs_prev['bb_per_100']:.2f}, "
+                        f"avg_payoff={vs_prev['avg_payoff']:.3f}"
+                    )
+                # Optional eval vs external model_old.pt if present
+                model_old_path = os.path.join(CHECKPOINT_PATH, "model_old.pt")
+                if os.path.exists(model_old_path):
+                    vs_old = self.eval_vs_model_file(model_old_path, num_hands=RANDOM_MATCH_HANDS)
+                    if vs_old["hands"] > 0:
+                        logger.info(
+                            f"[OldModelEval] iter {it}: vs_model_old_bb/100={vs_old['bb_per_100']:.2f}, "
+                            f"avg_payoff={vs_old['avg_payoff']:.3f}"
+                        )
+                self._snapshot_policy_state()
 
     # --- Saving / playing ---
 
@@ -529,8 +553,8 @@ class DeepCFRTrainer:
     def save_models(self, path: str = "models"):
         import os
         os.makedirs(path, exist_ok=True)
-        torch.save(self.adv_nets[0].state_dict(), f"{path}/adv_p0.pt")
-        torch.save(self.adv_nets[1].state_dict(), f"{path}/adv_p1.pt")
+        for pid, net in enumerate(self.adv_nets):
+            torch.save(net.state_dict(), f"{path}/adv_p{pid}.pt")
         torch.save(self.policy_net.state_dict(), f"{path}/policy.pt")
         logger.info(f"Saved models to {path}/")
 
@@ -546,19 +570,14 @@ class DeepCFRTrainer:
             return False
 
         try:
-            p0 = os.path.join(path, "adv_p0.pt")
-            p1 = os.path.join(path, "adv_p1.pt")
             pol = os.path.join(path, "policy.pt")
-
-            if os.path.exists(p0) and os.path.exists(p1) and os.path.exists(pol):
-                self.adv_nets[0].load_state_dict(torch.load(p0, map_location=DEVICE))
-                self.adv_nets[1].load_state_dict(torch.load(p1, map_location=DEVICE))
+            adv_paths = [os.path.join(path, f"adv_p{pid}.pt") for pid in range(self.num_players)]
+            if all(os.path.exists(p) for p in adv_paths) and os.path.exists(pol):
+                for pid, pth in enumerate(adv_paths):
+                    self.adv_nets[pid].load_state_dict(torch.load(pth, map_location=DEVICE))
+                    self.adv_nets[pid].eval()
                 self.policy_net.load_state_dict(torch.load(pol, map_location=DEVICE))
-
-                self.adv_nets[0].eval()
-                self.adv_nets[1].eval()
                 self.policy_net.eval()
-
                 logger.info(f"Loaded models from {path}/")
                 self.loaded_from_checkpoint = True
                 return True
@@ -573,18 +592,28 @@ class DeepCFRTrainer:
 
     # Utility for inference: sample an action from the trained policy network for
     # a given state/player (used by demo hand and deployments).
-    def choose_action_policy(self, state: GameState, player: int) -> int:
+    def _snapshot_policy_state(self) -> None:
+        """Keep a CPU copy of the current policy weights (max 3)."""
+        snap = {k: v.detach().cpu().clone() for k, v in self.policy_net.state_dict().items()}
+        self.policy_snapshots.append(snap)
+
+    # Utility for inference: sample an action from a (possibly provided) policy
+    # network for a given state/player.
+    def choose_action_policy(self, state: GameState, player: int, policy_net: PolicyNet = None) -> int:
         from poker_env import NUM_ACTIONS
 
         env = self.env
         x = encode_state(state, player).to(DEVICE)
 
-        with torch.no_grad():
-            logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
+        net = policy_net if policy_net is not None else self.policy_net
 
-        probs = torch.exp(logp)  # If log-softmax output, else use torch.softmax(logp, -1)
+        with torch.no_grad():
+            logp = net(x.unsqueeze(0)).squeeze(0)
 
         legal_actions = env.legal_actions(state)
+        if not legal_actions:
+            return 0
+        probs = torch.exp(logp)  # If log-softmax output, else use torch.softmax(logp, -1)
         mask = torch.zeros(NUM_ACTIONS, dtype=torch.float32, device=DEVICE)
         mask[legal_actions] = 1.0
 
@@ -604,3 +633,35 @@ class DeepCFRTrainer:
             a = random.choice(legal_actions)
 
         return a
+
+    def eval_vs_policy(self, other_state_dict, num_hands: int = 200) -> dict:
+        """Evaluate current policy (P0) vs a frozen opponent policy (P1)."""
+        opponent = move_to_device(PolicyNet(self.state_dim))
+        opponent.load_state_dict(other_state_dict)
+        opponent.eval()
+
+        total_payoff = 0.0
+
+        for _ in range(num_hands):
+            s = self.env.new_hand()
+            while not s.terminal:
+                p = s.to_act
+                if p == 0:
+                    a = self.choose_action_policy(s, 0)
+                else:
+                    a = self.choose_action_policy(s, p, policy_net=opponent)
+                s = self.env.step(s, a)
+
+            total_payoff += self.env.terminal_payoff(s, 0)
+
+        avg = total_payoff / num_hands
+        bb_per_100 = (avg / self.env.bb) * 100.0
+
+        return {"avg_payoff": avg, "bb_per_100": bb_per_100, "hands": num_hands}
+
+    def eval_vs_model_file(self, model_path: str, num_hands: int = 200) -> dict:
+        """Evaluate current policy vs a policy loaded from disk if present."""
+        if not os.path.exists(model_path):
+            return {"avg_payoff": 0.0, "bb_per_100": 0.0, "hands": 0}
+        state_dict = torch.load(model_path, map_location=DEVICE)
+        return self.eval_vs_policy(state_dict, num_hands=num_hands)

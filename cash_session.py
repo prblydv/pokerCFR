@@ -1,67 +1,59 @@
 # ---------------------------------------------------------------------------
-# File overview:
-#   cash_session.py tracks stacks for repeated hands with SimpleHoldemEnv.
-#   Import CashSession from CLI or interactive play scripts.
+# CashSession: Correct version for SimpleHoldemEnv
 # ---------------------------------------------------------------------------
 
 class CashSession:
-    # Function metadata:
-    #   Inputs: env, starting_stacks  # dtype=varies
-    #   Sample:
-    #       sample_output = __init__(env=mock_env, starting_stacks=None)  # dtype=Any
-    def __init__(self, env, starting_stacks=(200,200)):
+    def __init__(self, env, starting_stacks=None):
         self.env = env
+        n = getattr(env, "num_players", 2)
+        if starting_stacks is None:
+            starting_stacks = tuple(env.stack_size for _ in range(n))
         self.session_stacks = list(starting_stacks)
 
-    # Function metadata:
-    #   Inputs: no explicit parameters  # dtype=varies
-    #   Sample:
-    #       sample_output = start_hand()  # dtype=Any
     def start_hand(self):
         """
         Start a new cash-game hand.
-        We force the environment to use our session stacks.
+        We override ONLY the stacks inside the new GameState,
+        but DO NOT repost blinds, DO NOT recalc pot, DO NOT touch to_act.
+        The environment already handles blinds & setup correctly.
         """
-        # Let env create a fresh hand
         s = self.env.new_hand()
 
-        # Overwrite stacks to use session stacks
+        # Overwrite stacks for chip continuity
         s.stacks = self.session_stacks[:]
 
-        # Re-post blinds using correct players
+        # Re-apply blinds EXACTLY the way env.new_hand() already did:
+        # SB and BB have already been deducted in new_hand(),
+        # so we must simply recompute contrib/pot to match stacks.
+        sbp = s.sb_player
+        bbp = s.bb_player
         sb = self.env.sb
         bb = self.env.bb
 
-        sbp = s.sb_player
-        bbp = s.bb_player
+        # Reset contributions consistent with new stacks
+        s.contrib = [0.0 for _ in range(getattr(s, "num_players", 2))]
+        sb_post = min(sb, s.stacks[sbp])
+        bb_post = min(bb, s.stacks[bbp])
+        s.contrib[sbp] = sb_post
+        s.contrib[bbp] = bb_post
 
-        s.stacks[sbp] -= sb
-        s.stacks[bbp] -= bb
+        # Deduct blinds properly (cap at available stack to avoid negatives)
+        s.stacks[sbp] -= sb_post
+        s.stacks[bbp] -= bb_post
 
-        s.pot = sb + bb
-        s.current_bet = bb
-        s.last_aggressor = bbp
-        s.to_act = sbp
+        # Recompute pot + betting state (current bet is the larger posted blind)
+        s.pot = sb_post + bb_post
+        s.current_bet = max(sb_post, bb_post)
 
-        # Save for payoff calculation
+        # Save for payoff reference
         s.initial_stacks = self.session_stacks[:]
+        s.players_acted = [s.folded[i] or s.stacks[i] <= 0 for i in range(getattr(s, "num_players", 2))]
 
         return s
 
-    # Function metadata:
-    #   Inputs: final_state  # dtype=varies
-    #   Sample:
-    #       sample_output = apply_results(final_state=None)  # dtype=Any
     def apply_results(self, final_state):
-        """
-        Update cash session stacks at the end of each hand.
-        session_stacks = final_state.stacks
-        """
+        """Directly adopt the final stacks from environment."""
         self.session_stacks = final_state.stacks[:]
 
-    # Function metadata:
-    #   Inputs: no explicit parameters  # dtype=varies
-    #   Sample:
-    #       sample_output = get_stacks()  # dtype=Any
     def get_stacks(self):
         return tuple(self.session_stacks)

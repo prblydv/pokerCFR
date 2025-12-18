@@ -295,37 +295,55 @@ def encode_state(state, player: int) -> torch.Tensor:
     """
     Encode public + private information for Deep CFR.
 
-    Layout:
-      [ street_one_hot(4),
-        acting_player_flag,
-        pot_norm,
-        stack0_norm, stack1_norm,
-        current_bet_norm,
-        last_aggressor_flag,
-        hand_strength,
-        board_strength,
-        hole_hi_rank_norm,
-        hole_lo_rank_norm,
-        hole_suited_flag,
-        hole_pair_flag ]
+    Layout (variable length with num_players=N):
+      - street_one_hot (4)
+      - hero_position_one_hot (N, 0 = button, 1 = SB for N>2, etc.)
+      - acting_player_index_norm
+      - pot_norm, current_bet_norm, to_call_norm(hero), pot_after_call_norm(hero), spr(hero)
+      - last_aggressor_present, last_aggressor_rel_norm
+      - hero_is_sb, hero_is_bb
+      - hand_strength, board_strength
+      - per-seat features rotated to hero first (for each seat: stack_norm, contrib_norm, to_call_norm, folded, all_in, acted, to_act_flag)
+      - hole_feats (4)
+      - action_seq encoding (ACTION_SEQ_LEN * 7)
     """
-    from poker_env import STREET_PREFLOP, STREET_FLOP, STREET_TURN, STREET_RIVER
+    from poker_env import (
+        STREET_PREFLOP, STREET_FLOP, STREET_TURN, STREET_RIVER,
+        ACTION_FOLD, ACTION_CHECK, ACTION_CALL, ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN, ACTION_SEQ_LEN
+    )
+
+    # Derive reference stack size per hand/session so normalization stays valid
+    # when playing with variable or drifting stacks.
+    ref_stack = STACK_SIZE
+    if hasattr(state, "initial_stacks") and state.initial_stacks:
+        try:
+            ref_stack = max(max(state.initial_stacks), 1e-6)
+        except Exception:
+            ref_stack = STACK_SIZE
 
     # Street one-hot
     street_oh = [0.0, 0.0, 0.0, 0.0]
     street_oh[state.street] = 1.0
 
+    num_players = getattr(state, "num_players", len(state.stacks))
+    button = getattr(state, "button_player", getattr(state, "sb_player", 0))
+    hero_pos = (player - button) % num_players
+    hero_pos_oh = [1.0 if i == hero_pos else 0.0 for i in range(num_players)]
+
     # Public scalars
-    pot_norm = state.pot / (STACK_SIZE * 2)
-    stacks_norm = [s / STACK_SIZE for s in state.stacks]
-    curr_bet_norm = state.current_bet / STACK_SIZE
-
-    # Last aggressor from current player's perspective
-    if state.last_aggressor == -1:
-        last_agg_flag = 0.0
-    else:
-        last_agg_flag = float(state.last_aggressor == player)
-
+    pot_norm = state.pot / (ref_stack * max(2, num_players))
+    curr_bet_norm = state.current_bet / ref_stack
+    to_call = max(0.0, state.current_bet - state.contrib[player])
+    to_call_norm = to_call / ref_stack
+    pot_after_call_norm = (state.pot + to_call) / (ref_stack * max(2, num_players))
+    # Stack-to-pot ratio: critical for bet sizing / bluffing logic
+    spr = state.stacks[player] / max(1.0, state.pot)
+    hero_is_sb = 1.0 if getattr(state, "sb_player", -1) == player else 0.0
+    hero_is_bb = 1.0 if getattr(state, "bb_player", -1) == player else 0.0
+    last_agg_present = 0.0 if state.last_aggressor is None or state.last_aggressor < 0 else 1.0
+    last_agg_rel = 0.0
+    if last_agg_present > 0.0:
+        last_agg_rel = ((player - state.last_aggressor) % num_players) / max(1.0, num_players - 1)
     # Strength estimates
     hand_str = normalized_strength(state.hole[player], state.board)
     board_str = normalized_strength([], state.board) if state.board else 0.0
@@ -333,17 +351,66 @@ def encode_state(state, player: int) -> torch.Tensor:
     # Private hole-card identity features
     hole_feats = encode_hole_cards(state.hole[player])
 
-    vec = street_oh + [
-        float(player),
-        pot_norm,
-        stacks_norm[0],
-        stacks_norm[1],
-        curr_bet_norm,
-        last_agg_flag,
-        hand_str,
-        board_str,
-    ] + hole_feats
+    def encode_action_sequence():
+        vec_seq = []
+        seq = getattr(state, "action_seq", []) or []
+        k = ACTION_SEQ_LEN
+        for i in range(k):
+            if i < len(seq):
+                actor, act, size_norm = seq[-1 - i]  # latest first
+                actor_offset = ((actor - player) % num_players) / max(1.0, num_players - 1)
+                is_fold = 1.0 if act == ACTION_FOLD else 0.0
+                is_check = 1.0 if act == ACTION_CHECK else 0.0
+                is_call = 1.0 if act == ACTION_CALL else 0.0
+                is_rsmall = 1.0 if act == ACTION_RAISE_SMALL else 0.0
+                is_rbig = 1.0 if act in (ACTION_RAISE_MEDIUM, ACTION_ALL_IN) else 0.0
+                vec_seq.extend([
+                    actor_offset,
+                    is_fold,
+                    is_check,
+                    is_call,
+                    is_rsmall,
+                    is_rbig,
+                    float(size_norm),
+                ])
+            else:
+                vec_seq.extend([0.0] * 7)
+        return vec_seq
+
+    per_seat = []
+    order = [(player + i) % num_players for i in range(num_players)]
+    acted = getattr(state, "players_acted", [False] * num_players)
+    for pid in order:
+        per_seat.extend([
+            state.stacks[pid] / ref_stack,
+            state.contrib[pid] / ref_stack,
+            max(0.0, state.current_bet - state.contrib[pid]) / ref_stack,
+            1.0 if getattr(state, "folded", [False] * num_players)[pid] else 0.0,
+            1.0 if state.stacks[pid] <= 0 else 0.0,
+            1.0 if acted[pid] else 0.0,
+            1.0 if state.to_act == pid else 0.0,
+        ])
+
+    vec = (
+        street_oh
+        + hero_pos_oh
+        + [
+            float(player) / max(1.0, num_players - 1),
+            pot_norm,
+            to_call_norm,
+            pot_after_call_norm,
+            curr_bet_norm,
+            spr,
+            hero_is_sb,
+            hero_is_bb,
+            last_agg_present,
+            last_agg_rel,
+            hand_str,
+            board_str,
+        ]
+        + per_seat
+        + hole_feats
+        + encode_action_sequence()
+    )
 
     return torch.tensor(vec, dtype=torch.float32)
-
-

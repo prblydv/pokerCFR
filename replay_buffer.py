@@ -4,6 +4,7 @@
 #   Import the buffer class from trainers; no CLI entry point.
 # ---------------------------------------------------------------------------
 import random
+import collections
 
 
 class ReservoirBuffer:
@@ -43,3 +44,4 @@ class ReservoirBuffer:
     #       current = len(buf)  # dtype=int
     def __len__(self):
         return len(self.data)
+

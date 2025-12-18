@@ -6,20 +6,24 @@
 import logging
 
 # Randomness
-RNG_SEED = 4933444
+RNG_SEED = 434434462445
 DETERMINISTIC_SEED = 4933444  # set this to control global RNG behavior
 
 # Poker game parameters
 STACK_SIZE = 200.0
 SMALL_BLIND = 1.0
 BIG_BLIND = 2.0
+# Number of seated players (use n >= 2). The engine rotates seats hand to hand.
+# `numPlayer` is kept as an alias for backwards compatibility with prior configs.
+NUM_PLAYERS = 3
+numPlayer = NUM_PLAYERS
 
 
 NUM_ACTIONS = 6
 
 # Deep CFR training parameters
 NUM_ITERATIONS = 10000          # increase for stronger bot
-TRAVERSALS_PER_ITER = 5
+TRAVERSALS_PER_ITER = 1
 STRAT_SAMPLES_PER_ITER = 50
 
 ADV_BUFFER_CAPACITY = 500_000
@@ -29,6 +33,8 @@ ADV_BUFFER_BALANCE_GAP = 20_000
 BATCH_SIZE = 128
 ADV_LR = 1e-3
 POLICY_LR = 1e-3
+ADV_UPDATES_PER_ITER = 4      # number of advantage batches per iteration
+POLICY_UPDATES_PER_ITER = 2   # number of policy batches per iteration
 
 # Evaluation / reporting
 RANDOM_MATCH_INTERVAL = 5        # iterations between bot-vs-random evals during training
