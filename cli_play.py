@@ -102,8 +102,8 @@ def choose_bot_action(policy_net, state, player, legal):
         mask[a] = 0.0
 
     probs = torch.softmax(logits + mask, dim=-1)
-    # Deterministic: pick the highest-prob legal action
-    action = torch.argmax(probs).item()
+    # Stochastic: sample from the masked policy
+    action = torch.multinomial(probs, 1).item()
 
     if action not in legal:  # safety fallback
         action = legal[0]

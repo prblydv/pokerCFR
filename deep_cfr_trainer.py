@@ -6,6 +6,7 @@ import collections
 import os
 from typing import List
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -82,9 +83,17 @@ class DeepCFRTrainer:
         self.policy_losses = []
         self.eval_payoffs = []
         self.iter_times = []
+        self.eval_vs_prev_history = []
+        self.eval_score_history = []
         self.loaded_from_checkpoint = False
         self._snapshot_policy_state()
         self._snapshot_policy_state()
+        # Eval scoring baseline/state
+        self._anchor_ev_bb100 = None
+        self._delta_history = []
+        self._eval_counter = 0
+        self._score_anchor_interval = 5  # refresh anchor every N evals
+        self._score_min_sigma = 1.0
 
         if RESUME_FROM_LAST:
             try:
@@ -433,8 +442,8 @@ class DeepCFRTrainer:
                 stats[player]["aggr"] += hand_flags[player]["aggr"]
                 stats[player]["calls"] += hand_flags[player]["calls"]
                 stats[player]["actions"] += hand_flags[player]["actions"]
-            stats[0]["payoff"] += env.terminal_payoff(s, 0)
-            stats[1]["payoff"] += env.terminal_payoff(s, 1)
+            for player in range(self.num_players):
+                stats[player]["payoff"] += env.terminal_payoff(s, player)
 
         def summarize(player_stats):
             hands = max(player_stats["hands"], 1)
@@ -459,7 +468,31 @@ class DeepCFRTrainer:
                 "ev": ev,
             }
 
-        return {"players": {pid: summarize(stats[pid]) for pid in stats}}
+        summaries = {pid: summarize(stats[pid]) for pid in stats}
+        # Also report average policy EV (seats > 0) for clarity.
+        policy_ev = 0.0
+        policy_seats = max(1, self.num_players - 1)
+        for pid in range(1, self.num_players):
+            policy_ev += summaries[pid]["ev"]
+        policy_ev /= policy_seats
+        summaries["_policy_avg_ev"] = policy_ev
+        return {"players": summaries}
+
+    @staticmethod
+    def signed_policy_score(ev_current: float, ev_anchor: float, ev_deltas_history, min_sigma: float = 1.0) -> float:
+        """
+        Variance-aware signed score: (ev_current - ev_anchor) / std(history).
+        Returns >0 if improvement, <0 if regression, ~0 if noise.
+        """
+        if ev_deltas_history is None:
+            ev_deltas_history = []
+        delta = ev_current - ev_anchor
+        # Require a bit of history before trusting the signal
+        if len(ev_deltas_history) < 3:
+            return 0.0
+        sigma = np.std(ev_deltas_history, ddof=1)
+        sigma = max(sigma, min_sigma)
+        return delta / sigma
 
     ...
 
@@ -471,80 +504,129 @@ class DeepCFRTrainer:
     def train(self, num_iterations: int,
               traversals_per_iter: int,
               strat_samples_per_iter: int):
-        for it in range(1, num_iterations + 1):
-            iter_start_time = time.time()
-            adv_losses_iter = []
+        try:
+            for it in range(1, num_iterations + 1):
+                iter_start_time = time.time()
+                adv_losses_iter = []
 
-            # Advantage learning for each player
-            for p in range(self.num_players):
-                for _ in range(traversals_per_iter):
-                    s = self.env.new_hand()
-                    self.traverse(s, p)
-                for _ in range(ADV_UPDATES_PER_ITER):
-                    loss = self.train_advantage_net(p)
-                    if loss is not None:
-                        adv_losses_iter.append(loss)
+                # Advantage learning for each player
+                for p in range(self.num_players):
+                    for _ in range(traversals_per_iter):
+                        s = self.env.new_hand()
+                        self.traverse(s, p)
+                    for _ in range(ADV_UPDATES_PER_ITER):
+                        loss = self.train_advantage_net(p)
+                        if loss is not None:
+                            adv_losses_iter.append(loss)
 
-            # Strategy sampling
-            for _ in range(strat_samples_per_iter):
-                self.sample_strategy_trajectory()
-            policy_loss = None
-            for _ in range(POLICY_UPDATES_PER_ITER):
-                pl = self.train_policy_net()
-                if pl is not None:
-                    policy_loss = pl  # track last non-None
-            if policy_loss is not None:
-                self.policy_losses.append(policy_loss)
+                # Strategy sampling
+                for _ in range(strat_samples_per_iter):
+                    self.sample_strategy_trajectory()
+                policy_loss = None
+                for _ in range(POLICY_UPDATES_PER_ITER):
+                    pl = self.train_policy_net()
+                    if pl is not None:
+                        policy_loss = pl  # track last non-None
+                if policy_loss is not None:
+                    self.policy_losses.append(policy_loss)
 
-            if adv_losses_iter:
-                avg_adv_loss = sum(adv_losses_iter) / len(adv_losses_iter)
-                self.adv_losses.append(avg_adv_loss)
-            else:
-                avg_adv_loss = None
+                if adv_losses_iter:
+                    avg_adv_loss = sum(adv_losses_iter) / len(adv_losses_iter)
+                    self.adv_losses.append(avg_adv_loss)
+                else:
+                    avg_adv_loss = None
 
-            # Periodic evaluation/logging
-            if it % 1 == 0:
-                payoff = self.eval_policy(num_hands=100)
-                self.eval_payoffs.append(payoff)
-                iter_time = time.time() - iter_start_time
-                self.iter_times.append(iter_time)
-                adv_loss_str = f"{avg_adv_loss:.4f}" if avg_adv_loss is not None else "n/a"
-                policy_loss_str = f"{policy_loss:.4f}" if policy_loss is not None else "n/a"
-                buf_sizes = ",".join(str(len(buf)) for buf in self.adv_buffers)
-                logger.info(
-                    f"Iter {it}: "
-                    f"adv_bufs=[{buf_sizes}], strat_buf={len(self.strat_buffer)}, "
-                    f"adv_loss={adv_loss_str}, policy_loss={policy_loss_str}, "
-                    f"eval_payoff_p0={payoff:.3f}, time={iter_time:.2f}s"
-                )
-
-            if RANDOM_MATCH_INTERVAL > 0 and it % RANDOM_MATCH_INTERVAL == 0:
-                match_stats = self.eval_vs_random(num_hands=RANDOM_MATCH_HANDS)
-                for pid, summary in match_stats["players"].items():
-                    def fmt_af(value):
-                        return "inf" if value == float("inf") else f"{value:.2f}"
+                # Periodic evaluation/logging
+                if it % 1 == 0:
+                    payoff = self.eval_policy(num_hands=100)
+                    self.eval_payoffs.append(payoff)
+                    iter_time = time.time() - iter_start_time
+                    self.iter_times.append(iter_time)
+                    adv_loss_str = f"{avg_adv_loss:.4f}" if avg_adv_loss is not None else "n/a"
+                    policy_loss_str = f"{policy_loss:.4f}" if policy_loss is not None else "n/a"
+                    buf_sizes = ",".join(str(len(buf)) for buf in self.adv_buffers)
                     logger.info(
-                        f"[RandomMatch] iter {it} player {pid}: "
-                        f"win%={summary['win_pct']:.1f}, VPIP%={summary['vpip_pct']:.1f}, "
-                        f"PFR%={summary['pfr_pct']:.1f}, EV={summary['ev']:.2f}, AF={fmt_af(summary['af'])}"
+                        f"Iter {it}: "
+                        f"adv_bufs=[{buf_sizes}], strat_buf={len(self.strat_buffer)}, "
+                        f"adv_loss={adv_loss_str}, policy_loss={policy_loss_str}, "
+                        f"eval_payoff_p0={payoff:.3f}, time={iter_time:.2f}s"
                     )
-                if self.policy_snapshots:
-                    prev = self.policy_snapshots[-1]
-                    vs_prev = self.eval_vs_policy(prev, num_hands=RANDOM_MATCH_HANDS)
-                    logger.info(
-                        f"[SelfPlayEval] iter {it}: vs_prev_bb/100={vs_prev['bb_per_100']:.2f}, "
-                        f"avg_payoff={vs_prev['avg_payoff']:.3f}"
-                    )
-                # Optional eval vs external model_old.pt if present
-                model_old_path = os.path.join(CHECKPOINT_PATH, "model_old.pt")
-                if os.path.exists(model_old_path):
-                    vs_old = self.eval_vs_model_file(model_old_path, num_hands=RANDOM_MATCH_HANDS)
-                    if vs_old["hands"] > 0:
+
+                if RANDOM_MATCH_INTERVAL > 0 and it % RANDOM_MATCH_INTERVAL == 0:
+                    match_stats = self.eval_vs_random(num_hands=RANDOM_MATCH_HANDS)
+                    for pid, summary in match_stats["players"].items():
+                        if isinstance(pid, int):
+                            def fmt_af(value):
+                                return "inf" if value == float("inf") else f"{value:.2f}"
+                            logger.info(
+                                f"[RandomMatch] iter {it} player {pid}: "
+                                f"win%={summary['win_pct']:.1f}, VPIP%={summary['vpip_pct']:.1f}, "
+                                f"PFR%={summary['pfr_pct']:.1f}, EV={summary['ev']:.2f}, AF={fmt_af(summary['af'])}"
+                            )
+                    if "_policy_avg_ev" in match_stats["players"]:
                         logger.info(
-                            f"[OldModelEval] iter {it}: vs_model_old_bb/100={vs_old['bb_per_100']:.2f}, "
-                            f"avg_payoff={vs_old['avg_payoff']:.3f}"
+                            f"[RandomMatch] iter {it} avg_policy_ev={match_stats['players']['_policy_avg_ev']:.2f}"
                         )
-                self._snapshot_policy_state()
+                    if self.policy_snapshots:
+                        prev = self.policy_snapshots[-1]
+                        vs_prev = self.eval_vs_policy(prev, num_hands=RANDOM_MATCH_HANDS)
+                        logger.info(
+                            f"[SelfPlayEval] iter {it}: vs_prev_bb/100={vs_prev['bb_per_100']:.2f}, "
+                            f"avg_payoff={vs_prev['avg_payoff']:.3f}"
+                        )
+                    else:
+                        vs_prev = None
+                    # Optional eval vs external model_old.pt if present
+                    model_old_path = os.path.join(CHECKPOINT_PATH, "model_old.pt")
+                    if os.path.exists(model_old_path):
+                        vs_old = self.eval_vs_model_file(model_old_path, num_hands=RANDOM_MATCH_HANDS)
+                        if vs_old["hands"] > 0:
+                            logger.info(
+                                f"[OldModelEval] iter {it}: vs_model_old_bb/100={vs_old['bb_per_100']:.2f}, "
+                                f"avg_payoff={vs_old['avg_payoff']:.3f}"
+                            )
+                        team_old = self.eval_team_vs_model(model_old_path, num_hands=RANDOM_MATCH_HANDS)
+                        if team_old["hands"] > 0:
+                            logger.info(
+                                f"[OldModelEval-Team] iter {it}: current_bb/100={team_old['team_current_bb100']:.2f}, "
+                                f"model_bb/100={team_old['team_model_bb100']:.2f}"
+                            )
+                    # Signed variance-aware score vs anchor using eval_vs_policy (prev snapshot)
+                    if vs_prev is not None:
+                        bb = max(getattr(self.env, "bb", 1.0), 1e-6)
+                        ev_bb100 = vs_prev["bb_per_100"]  # directional vs previous snapshot
+                        self.eval_vs_prev_history.append(ev_bb100)
+                        if self._anchor_ev_bb100 is None:
+                            self._anchor_ev_bb100 = ev_bb100
+                            self._delta_history.clear()
+                            self._eval_counter = 0
+                            logger.info(f"[EvalScore] anchor set to {ev_bb100:.2f} bb/100")
+                        else:
+                            score = self.signed_policy_score(
+                                ev_bb100,
+                                self._anchor_ev_bb100,
+                                self._delta_history,
+                                min_sigma=self._score_min_sigma,
+                            )
+                            logger.info(
+                                f"[EvalScore] ev_bb/100={ev_bb100:.2f}, anchor={self._anchor_ev_bb100:.2f}, "
+                                f"score={score:.2f}"
+                            )
+                            self._delta_history.append(ev_bb100 - self._anchor_ev_bb100)
+                            self.eval_score_history.append(score)
+                            self._eval_counter += 1
+                            if self._eval_counter >= self._score_anchor_interval:
+                                self._anchor_ev_bb100 = ev_bb100
+                                self._delta_history.clear()
+                                self._eval_counter = 0
+                                logger.info(f"[EvalScore] anchor refreshed to {ev_bb100:.2f} bb/100")
+                    self._snapshot_policy_state()
+        except KeyboardInterrupt:
+            logger.warning("KeyboardInterrupt caught inside trainer; saving models before re-raising.")
+            try:
+                self.save_models()
+            finally:
+                raise
 
     # --- Saving / playing ---
 
@@ -665,3 +747,49 @@ class DeepCFRTrainer:
             return {"avg_payoff": 0.0, "bb_per_100": 0.0, "hands": 0}
         state_dict = torch.load(model_path, map_location=DEVICE)
         return self.eval_vs_policy(state_dict, num_hands=num_hands)
+
+    def eval_team_vs_model(self, model_path: str, num_hands: int = 200) -> dict:
+        """
+        Evaluate alternating seats: even seats = current policy, odd seats = model from disk.
+        Returns average team EV per hand (current vs model) in chips and bb/100.
+        Assumes 6-max but works for any num_players >=2 by alternating seats.
+        """
+        if not os.path.exists(model_path):
+            return {"hands": 0, "team_current_ev": 0.0, "team_model_ev": 0.0, "team_current_bb100": 0.0, "team_model_bb100": 0.0}
+        opponent = move_to_device(PolicyNet(self.state_dim))
+        opponent.load_state_dict(torch.load(model_path, map_location=DEVICE))
+        opponent.eval()
+
+        current_seats = [i for i in range(self.num_players) if i % 2 == 0]
+        model_seats = [i for i in range(self.num_players) if i % 2 == 1]
+        team_current_total = 0.0
+        team_model_total = 0.0
+        for _ in range(num_hands):
+            s = self.env.new_hand()
+            while not s.terminal:
+                p = s.to_act
+                legal = self.env.legal_actions(s)
+                if not legal:
+                    break
+                if p in current_seats:
+                    a = self.choose_action_policy(s, p)
+                else:
+                    a = self.choose_action_policy(s, p, policy_net=opponent)
+                s = self.env.step(s, a)
+            for seat in current_seats:
+                team_current_total += self.env.terminal_payoff(s, seat)
+            for seat in model_seats:
+                team_model_total += self.env.terminal_payoff(s, seat)
+
+        team_current_ev = team_current_total / num_hands
+        team_model_ev = team_model_total / num_hands
+        bb = max(getattr(self.env, "bb", 1.0), 1e-6)
+        team_current_bb100 = (team_current_ev / bb) * 100.0
+        team_model_bb100 = (team_model_ev / bb) * 100.0
+        return {
+            "hands": num_hands,
+            "team_current_ev": team_current_ev,
+            "team_model_ev": team_model_ev,
+            "team_current_bb100": team_current_bb100,
+            "team_model_bb100": team_model_bb100,
+        }

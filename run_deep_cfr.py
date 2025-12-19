@@ -90,6 +90,32 @@ def plot_training_curves(trainer: DeepCFRTrainer, out_path: str = "training_curv
     logger.info(f"Saved training curves to {out_path}")
 
 
+def plot_eval_curves(trainer: DeepCFRTrainer, out_path: str = "eval_curves.png"):
+    """Plot eval_vs_policy bb/100 and signed scores over eval checkpoints."""
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+
+    # bb/100 vs previous snapshot
+    if trainer.eval_vs_prev_history:
+        x = list(range(1, len(trainer.eval_vs_prev_history) + 1))
+        axes[0].plot(x, trainer.eval_vs_prev_history, label="vs_prev_bb/100", color="tab:blue")
+    axes[0].set_ylabel("BB/100 vs prev")
+    axes[0].legend(loc="upper right")
+
+    # Signed score history
+    if trainer.eval_score_history:
+        xs = list(range(1, len(trainer.eval_score_history) + 1))
+        axes[1].plot(xs, trainer.eval_score_history, label="signed_score", color="tab:green")
+    axes[1].axhline(0.0, color="gray", linestyle="--", linewidth=0.8)
+    axes[1].set_ylabel("Signed score")
+    axes[1].set_xlabel("Eval checkpoints")
+    axes[1].legend(loc="upper right")
+
+    fig.tight_layout()
+    plt.savefig(out_path)
+    plt.close(fig)
+    logger.info(f"Saved eval curves to {out_path}")
+
+
 # Function metadata:
 #   Inputs: trainer  # dtype=varies
 #   Sample:
@@ -144,7 +170,8 @@ def signal_handler(signum, frame):
         try:
             _trainer.save_models()
             plot_training_curves(_trainer)
-            logger.info("Models saved successfully.")
+            plot_eval_curves(_trainer)
+            logger.info("Models and curves saved successfully (signal).")
         except Exception as e:
             logger.error(f"Error saving models: {e}")
     sys.exit(0)
@@ -220,6 +247,7 @@ def main():
         
         logger.info("Generating training curves...")
         plot_training_curves(trainer)
+        plot_eval_curves(trainer)
         
         logger.info("Playing demo hand...")
         demo_hand(trainer)
@@ -234,6 +262,7 @@ def main():
             try:
                 _trainer.save_models()
                 plot_training_curves(_trainer)
+                plot_eval_curves(_trainer)
                 logger.info("Models and plots saved after interrupt.")
             except Exception as e:
                 logger.error(f"Error while saving during interrupt: {e}", exc_info=True)
