@@ -17,31 +17,26 @@ from networks import PolicyNet
 
 
 # -------------------------------------------------------------------------
-# Action Labels (10 actions)
-# -------------------------------------------------------------------------
+# Action Labels (8 actions)
 ACTION_LABELS = {
     0: "FOLD",
-    1: "CALL",
-    2: "2x",
-    3: "2.25x",
-    4: "2.5x",
-    5: "3x",
-    6: "3.5x",
-    7: "4.5x",
-    8: "6x",
-    9: "ALL-IN",
+    1: "CHECK",
+    2: "CALL",
+    3: "BET 25% POT",
+    4: "BET 50% POT",
+    5: "BET 100% POT",
+    6: "BET 200% POT",
+    7: "ALL-IN",
 }
 
 ACTION_COLORS = {
     "FOLD": "#d3d3d3",
+    "CHECK": "#cfe8f3",
     "CALL": "#87cefa",
-    "2x": "#add8e6",
-    "2.25x": "#87cefa",
-    "2.5x": "#00bfff",
-    "3x": "#1e90ff",
-    "3.5x": "#4169e1",
-    "4.5x": "#0000cd",
-    "6x": "#191970",
+    "BET 25% POT": "#b2df8a",
+    "BET 50% POT": "#33a02c",
+    "BET 100% POT": "#1b7837",
+    "BET 200% POT": "#e66101",
     "ALL-IN": "#ff4d4d",
 }
 

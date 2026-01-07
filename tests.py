@@ -16,8 +16,10 @@ from poker_env import (
     ACTION_CHECK,
     ACTION_CALL,
     ACTION_FOLD,
-    ACTION_RAISE_SMALL,
-    ACTION_RAISE_MEDIUM,
+    ACTION_BET_POT_25,
+    ACTION_BET_POT_50,
+    ACTION_BET_POT_100,
+    ACTION_BET_POT_200,
     ACTION_ALL_IN,
     GameState,
 )
@@ -195,7 +197,7 @@ def test_raise_logic():
     contrib0_sb = s0.contrib[sb]
 
     # SB raises small preflop
-    s = env.step(s0, ACTION_RAISE_SMALL)
+    s = env.step(s0, ACTION_BET_POT_50)
 
     if s.last_aggressor != sb:
         fail("Raise aggressor", "last_aggressor incorrect")
@@ -331,7 +333,7 @@ def test_legal_actions_sb_preflop():
         fail("SB preflop actions", "FOLD should be allowed facing BB")
         return
     # Some raise or all-in must be allowed if SB has chips
-    if all(a not in actions for a in [ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN]):
+    if all(a not in actions for a in [ACTION_BET_POT_25, ACTION_BET_POT_50, ACTION_BET_POT_100, ACTION_BET_POT_200, ACTION_ALL_IN]):
         fail("SB preflop actions", "No raise/all-in option found")
         return
 
@@ -451,7 +453,7 @@ def test_bet_call_ends_street_postflop():
         return
 
     # On flop: BB RAISE (bet), SB CALL
-    s = env.step(s, ACTION_RAISE_SMALL)
+    s = env.step(s, ACTION_BET_POT_50)
     s = env.step(s, ACTION_CALL)
 
     if s.street != STREET_TURN:

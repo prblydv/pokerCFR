@@ -30,11 +30,14 @@ logger = logging.getLogger("DeepCFR")
 RNG = random.Random(42)
 
 ACTION_FOLD = 0
-ACTION_CALL = 1
-ACTION_HALF_POT = 2
-ACTION_POT = 3
-ACTION_ALL_IN = 4
-NUM_ACTIONS = 5
+ACTION_CHECK = 1
+ACTION_CALL = 2
+ACTION_BET_POT_25 = 3
+ACTION_BET_POT_50 = 4
+ACTION_BET_POT_100 = 5
+ACTION_BET_POT_200 = 6
+ACTION_ALL_IN = 7
+NUM_ACTIONS = 8
 
 STREET_PREFLOP = 0
 STREET_FLOP = 1
@@ -172,9 +175,19 @@ class SimpleHoldemEnv:
         if s.terminal:
             return []
 
-        actions = [ACTION_FOLD, ACTION_CALL]
+        actions = []
+        if s.current_bet > 0.0:
+            actions += [ACTION_FOLD, ACTION_CALL]
+        else:
+            actions.append(ACTION_CHECK)
         if s.stacks[s.to_act] > 0.0:
-            actions += [ACTION_HALF_POT, ACTION_POT, ACTION_ALL_IN]
+            actions += [
+                ACTION_BET_POT_25,
+                ACTION_BET_POT_50,
+                ACTION_BET_POT_100,
+                ACTION_BET_POT_200,
+                ACTION_ALL_IN,
+            ]
         return actions
 
     # Function metadata:
@@ -256,7 +269,12 @@ class SimpleHoldemEnv:
             s.winner = opp
             return s
 
-        if action == ACTION_CALL:
+        if action == ACTION_CHECK:
+            if s.current_bet > 0.0:
+                return s
+            s.current_bet = 0.0
+            s.last_aggressor = -1
+        elif action == ACTION_CALL:
             call_amt = min(s.current_bet, s.stacks[player])
             s.stacks[player] -= call_amt
             s.pot += call_amt
@@ -264,13 +282,17 @@ class SimpleHoldemEnv:
             s.current_bet = 0.0
             s.last_aggressor = -1
 
-        elif action in (ACTION_HALF_POT, ACTION_POT, ACTION_ALL_IN):
+        elif action in (ACTION_BET_POT_25, ACTION_BET_POT_50, ACTION_BET_POT_100, ACTION_BET_POT_200, ACTION_ALL_IN):
             # Determine raise size
             base_pot = max(s.pot, 1.0)
-            if action == ACTION_HALF_POT:
-                amount = min(s.stacks[player], base_pot * 0.5)
-            elif action == ACTION_POT:
-                amount = min(s.stacks[player], base_pot * 1.0)
+            if action == ACTION_BET_POT_25:
+                amount = min(s.stacks[player], base_pot * 0.25)
+            elif action == ACTION_BET_POT_50:
+                amount = min(s.stacks[player], base_pot * 0.50)
+            elif action == ACTION_BET_POT_100:
+                amount = min(s.stacks[player], base_pot * 1.00)
+            elif action == ACTION_BET_POT_200:
+                amount = min(s.stacks[player], base_pot * 2.00)
             else:
                 amount = s.stacks[player]  # all-in
 

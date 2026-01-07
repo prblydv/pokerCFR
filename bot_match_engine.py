@@ -125,7 +125,7 @@ class BotMatchEngine:
         x = encode_state(state, player).to(DEVICE)
         
         with torch.no_grad():
-            logp = policy_net(x.unsqueeze(0)).squeeze(0)
+            logits = policy_net(x.unsqueeze(0)).squeeze(0)
         
         legal_actions = self.env.legal_actions(state)
         
@@ -134,7 +134,7 @@ class BotMatchEngine:
         for a in legal_actions:
             mask[a] = 0
         
-        probs = torch.softmax(logp + mask, dim=-1)
+        probs = torch.softmax(logits + mask, dim=-1)
         action = torch.multinomial(probs, 1).item()
         
         # Fallback to random legal action if needed
@@ -167,7 +167,16 @@ class BotMatchEngine:
             action = self.choose_action(state, player, bot_idx)
             
             if verbose:
-                action_names = ["FOLD", "CALL/CHECK", "2×", "2.25×", "2.5×", "3×", "3.5×", "4.5×", "6×", "ALL-IN"]
+                action_names = [
+                    "FOLD",
+                    "CHECK",
+                    "CALL",
+                    "BET 25% POT",
+                    "BET 50% POT",
+                    "BET 100% POT",
+                    "BET 200% POT",
+                    "ALL-IN",
+                ]
                 hand_history.append(f"P{player} → {action_names[action]}")
             
             state = self.env.step(state, action)

@@ -15,15 +15,13 @@ from networks import PolicyNet
 
 ACTION_LABELS = {
     0: "FOLD",
-    1: "CALL",
-    2: "2x",
-    3: "2.25x",
-    4: "2.5x",
-    5: "3x",
-    6: "3.5x",
-    7: "4.5x",
-    8: "6x",
-    9: "ALL-IN",
+    1: "CHECK",
+    2: "CALL",
+    3: "BET 25% POT",
+    4: "BET 50% POT",
+    5: "BET 100% POT",
+    6: "BET 200% POT",
+    7: "ALL-IN",
 }
 
 RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
@@ -102,7 +100,7 @@ if __name__ == "__main__":
     policy.load_state_dict(torch.load("models/policy.pt", map_location="cpu"))
     policy.eval()
 
-    action_probs = np.zeros((10, 13, 13))
+    action_probs = np.zeros((8, 13, 13))
 
     for i, r1 in enumerate(RANKS):
         for j, r2 in enumerate(RANKS):

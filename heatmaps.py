@@ -15,21 +15,25 @@ from poker_env import (
     ACTION_FOLD,
     ACTION_CHECK,
     ACTION_CALL,
-    ACTION_RAISE_SMALL,
-    ACTION_RAISE_MEDIUM,
+    ACTION_BET_POT_25,
+    ACTION_BET_POT_50,
+    ACTION_BET_POT_100,
+    ACTION_BET_POT_200,
     ACTION_ALL_IN,
     NUM_ACTIONS,
 )
 from abstraction import encode_state
 from networks import PolicyNet
 
-# -- Action setup matches the new 6-action abstraction --
+# -- Action setup matches the new 8-action abstraction --
 ACTION_LABELS = {
     ACTION_FOLD: "FOLD",
     ACTION_CHECK: "CHECK",
     ACTION_CALL: "CALL",
-    ACTION_RAISE_SMALL: "RAISE SMALL",
-    ACTION_RAISE_MEDIUM: "RAISE MEDIUM",
+    ACTION_BET_POT_25: "BET 25% POT",
+    ACTION_BET_POT_50: "BET 50% POT",
+    ACTION_BET_POT_100: "BET 100% POT",
+    ACTION_BET_POT_200: "BET 200% POT",
     ACTION_ALL_IN: "ALL-IN",
 }
 RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]

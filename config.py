@@ -4,9 +4,11 @@
 #   Deep CFR, and hardware selection. Import it; not executable standalone.
 # ---------------------------------------------------------------------------
 import logging
-
+import time
 # Randomness
-RNG_SEED = 433343
+# RNG_SEED = 4334343
+RNG_SEED = int(time.time())
+
 DETERMINISTIC_SEED = 493334444  # set this to control global RNG behavior
 
 # Poker game parameters
@@ -15,11 +17,11 @@ SMALL_BLIND = 1.0
 BIG_BLIND = 2.0
 # Number of seated players (use n >= 2). The engine rotates seats hand to hand.
 # `numPlayer` is kept as an alias for backwards compatibility with prior configs.
-NUM_PLAYERS = 3
+NUM_PLAYERS = 6
 numPlayer = NUM_PLAYERS
 
 
-NUM_ACTIONS = 6
+NUM_ACTIONS = 8
 
 # Deep CFR training parameters
 NUM_ITERATIONS = 10000          # increase for stronger bot

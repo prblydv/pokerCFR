@@ -14,15 +14,13 @@ from networks import PolicyNet
 # Action labels consistent with your net
 ACTION_LABELS = {
     0: "FOLD",
-    1: "CALL",
-    2: "2x",
-    3: "2.25x",
-    4: "2.5x",
-    5: "3x",
-    6: "3.5x",
-    7: "4.5x",
-    8: "6x",
-    9: "ALL-IN",
+    1: "CHECK",
+    2: "CALL",
+    3: "BET 25% POT",
+    4: "BET 50% POT",
+    5: "BET 100% POT",
+    6: "BET 200% POT",
+    7: "ALL-IN",
 }
 
 RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
@@ -106,13 +104,13 @@ if __name__ == "__main__":
     policy.load_state_dict(torch.load("models/policy.pt", map_location="cpu"))
     policy.eval()
 
-    action_probs = np.zeros((10, 13, 13))  # 10 actions, 13x13 grid
+    action_probs = np.zeros((8, 13, 13))  # 8 actions, 13x13 grid
 
     for i, r1 in enumerate(RANKS):
         for j, r2 in enumerate(RANKS):
 
             holes = make_hole(i, j)
-            avg = np.zeros(10)
+            avg = np.zeros(8)
 
             for h in holes:
                 avg += get_policy_probs(policy, env, h)
@@ -121,11 +119,11 @@ if __name__ == "__main__":
             action_probs[:, i, j] = avg
 
     # --- plotting ---
-    fig, axes = plt.subplots(2, 5, figsize=(20, 9))
+    fig, axes = plt.subplots(2, 4, figsize=(16, 9))
     vmax = 1.0
 
     for idx, (a, name) in enumerate(ACTION_LABELS.items()):
-        ax = axes[idx // 5, idx % 5]
+        ax = axes[idx // 4, idx % 4]
         mat = action_probs[a]
 
         im = ax.imshow(mat, cmap="Reds", vmin=0, vmax=vmax)

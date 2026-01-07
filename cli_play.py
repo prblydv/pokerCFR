@@ -14,8 +14,10 @@ from poker_env import (
     ACTION_FOLD,
     ACTION_CHECK,
     ACTION_CALL,
-    ACTION_RAISE_SMALL,
-    ACTION_RAISE_MEDIUM,
+    ACTION_BET_POT_25,
+    ACTION_BET_POT_50,
+    ACTION_BET_POT_100,
+    ACTION_BET_POT_200,
     ACTION_ALL_IN,
     NUM_ACTIONS,
 )
@@ -58,8 +60,10 @@ ACTION_NAMES = {
     ACTION_FOLD:        "FOLD",
     ACTION_CHECK:       "CHECK",
     ACTION_CALL:        "CALL",
-    ACTION_RAISE_SMALL: "RAISE SMALL",
-    ACTION_RAISE_MEDIUM:"RAISE MEDIUM",
+    ACTION_BET_POT_25:  "BET 25% POT",
+    ACTION_BET_POT_50:  "BET 50% POT",
+    ACTION_BET_POT_100: "BET 100% POT",
+    ACTION_BET_POT_200: "BET 200% POT",
     ACTION_ALL_IN:      "ALL-IN",
 }
 
@@ -67,9 +71,11 @@ USER_INPUT = {
     "1": ACTION_FOLD,
     "2": ACTION_CHECK,
     "3": ACTION_CALL,
-    "4": ACTION_RAISE_SMALL,
-    "5": ACTION_RAISE_MEDIUM,
-    "6": ACTION_ALL_IN,
+    "4": ACTION_BET_POT_25,
+    "5": ACTION_BET_POT_50,
+    "6": ACTION_BET_POT_100,
+    "7": ACTION_BET_POT_200,
+    "8": ACTION_ALL_IN,
 }
 
 
@@ -135,8 +141,7 @@ def play_one_hand(policy_net, env, state, debug_bot_probs=False, record_human_st
     bots = [i for i in range(num_players) if i != HUMAN]
     human_snapshots = []
 
-    print(f"
-{YELLOW}{BOLD}========== NEW HAND =========={RESET}")
+    print(f"\n{YELLOW}{BOLD}========== NEW HAND =========={RESET}")
     print(f"Your Cards: {card_to_str(state.hole[HUMAN][0])} {card_to_str(state.hole[HUMAN][1])}")
     stacks_str = ", ".join(f"P{idx}={state.stacks[idx]:.2f}" for idx in range(num_players))
     print(f"Stacks: {stacks_str}")
@@ -144,8 +149,7 @@ def play_one_hand(policy_net, env, state, debug_bot_probs=False, record_human_st
     print(f"Dealer/Button: P{state.button_player}")
     print(f"Small Blind:   P{state.sb_player}")
     print(f"Big Blind:     P{state.bb_player}")
-    print(f"{YELLOW}=============================== {RESET}
-")
+    print(f"{YELLOW}=============================== {RESET}\n")
 
     while not state.terminal:
         legal = env.legal_actions(state)
@@ -161,8 +165,8 @@ def play_one_hand(policy_net, env, state, debug_bot_probs=False, record_human_st
         print(f"Pot:    {state.pot:.2f}")
         stacks_line = ", ".join(f"P{idx}={state.stacks[idx]:.2f}" for idx in range(num_players))
         print(f"Stacks: {stacks_line}")
-        print(f"To act: {'YOU' if state.to_act == HUMAN else f'BOT P{state.to_act}'}
-")
+        print(f"To act: {'YOU' if state.to_act == HUMAN else f'BOT P{state.to_act}'}")
+        print()
 
         if state.to_act == HUMAN:
             if record_human_states:
@@ -171,9 +175,10 @@ def play_one_hand(policy_net, env, state, debug_bot_probs=False, record_human_st
             for a in legal:
                 print(f"  {a}: {ACTION_NAMES[a]}")
             print(f"Your Cards: {card_to_str(state.hole[HUMAN][0])} {card_to_str(state.hole[HUMAN][1])}")
-            print("
-Input: 1=fold, 2=check, 3=call, 4=raise small, 5=raise medium, 6=all-in
-")
+            print(
+                "\nInput: 1=fold, 2=check, 3=call, 4=bet 25% pot, 5=bet 50% pot, "
+                "6=bet 100% pot, 7=bet 200% pot, 8=all-in\n"
+            )
 
             action = None
             while action not in legal:
@@ -187,16 +192,14 @@ Input: 1=fold, 2=check, 3=call, 4=raise small, 5=raise medium, 6=all-in
                     continue
                 action = mapped
 
-            print(f"You -> {ACTION_NAMES[action]}
-")
+            print(f"You -> {ACTION_NAMES[action]}\n")
         else:
             if debug_bot_probs:
                 probs_list = bot_action_probs(policy_net, state, state.to_act, legal)
                 prob_str = " | ".join(f"{ACTION_NAMES[a]} {p:.2f}" for a, p in probs_list)
                 print(f"[Bot P{state.to_act} probs] {prob_str}")
             action = choose_bot_action(policy_net, state, state.to_act, legal)
-            print(f"Bot P{state.to_act} -> {ACTION_NAMES[action]}
-")
+            print(f"Bot P{state.to_act} -> {ACTION_NAMES[action]}\n")
 
         state = env.step(state, action)
 
@@ -215,8 +218,7 @@ Input: 1=fold, 2=check, 3=call, 4=raise small, 5=raise medium, 6=all-in
         bc1, bc2 = state.hole[bot_id]
         print(f"Bot P{bot_id} Cards: {card_to_str(bc1)} {card_to_str(bc2)}")
 
-    print(f"{YELLOW}{BOLD}=============================={RESET}
-")
+    print(f"{YELLOW}{BOLD}=============================={RESET}\n")
     return state, human_snapshots
 
 

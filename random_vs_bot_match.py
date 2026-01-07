@@ -19,8 +19,10 @@ from poker_env import (
     ACTION_FOLD,
     ACTION_CHECK,
     ACTION_CALL,
-    ACTION_RAISE_SMALL,
-    ACTION_RAISE_MEDIUM,
+    ACTION_BET_POT_25,
+    ACTION_BET_POT_50,
+    ACTION_BET_POT_100,
+    ACTION_BET_POT_200,
     ACTION_ALL_IN,
     NUM_ACTIONS,
     STREET_PREFLOP,
@@ -28,7 +30,7 @@ from poker_env import (
 from abstraction import encode_state
 from networks import PolicyNet
 
-RAISE_ACTIONS = {ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN}
+RAISE_ACTIONS = {ACTION_BET_POT_25, ACTION_BET_POT_50, ACTION_BET_POT_100, ACTION_BET_POT_200, ACTION_ALL_IN}
 MATCH_REPORT_INTERVAL = 50  # default report cadence for this script
 
 random.seed(DETERMINISTIC_SEED)

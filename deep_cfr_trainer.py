@@ -32,8 +32,10 @@ from poker_env import (
     GameState,
     NUM_ACTIONS,
     ACTION_CALL,
-    ACTION_RAISE_SMALL,
-    ACTION_RAISE_MEDIUM,
+    ACTION_BET_POT_25,
+    ACTION_BET_POT_50,
+    ACTION_BET_POT_100,
+    ACTION_BET_POT_200,
     ACTION_ALL_IN,
     STREET_PREFLOP,
 )
@@ -46,7 +48,7 @@ import logging
 logger = logging.getLogger("DeepCFR")
 
 RNG = random.Random(RNG_SEED)
-RAISE_ACTIONS = {ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM, ACTION_ALL_IN}
+RAISE_ACTIONS = {ACTION_BET_POT_25, ACTION_BET_POT_50, ACTION_BET_POT_100, ACTION_BET_POT_200, ACTION_ALL_IN}
 EPS_EXPLOIT = 0.15
 CONFIDENCE_THRESH = 0.7
 OVERBET_BOOST = 1.2
@@ -303,8 +305,8 @@ class DeepCFRTrainer:
         row_sums[row_sums == 0] = 1.0
         target_probs = target_probs / row_sums
 
-        logp = self.policy_net(xs)
-        # apply mask
+        logits = self.policy_net(xs)
+        logp = torch.log_softmax(logits, dim=-1)
         logp = logp * masks
         loss = ce(logp, target_probs)
 
@@ -332,14 +334,14 @@ class DeepCFRTrainer:
 
                 x = encode_state(s, s.to_act).to(DEVICE)
                 with torch.no_grad():
-                    logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
+                    logits = self.policy_net(x.unsqueeze(0)).squeeze(0)
 
                 # mask illegal actions
                 mask = torch.full((NUM_ACTIONS,), -1e9, device=DEVICE)
                 for a in legal_actions:
                     mask[a] = 0
 
-                probs = torch.softmax(logp + mask, dim=-1)
+                probs = torch.softmax(logits + mask, dim=-1)
                 a = torch.multinomial(probs, 1).item()
 
                 s = env.step(s, a)
@@ -376,15 +378,15 @@ class DeepCFRTrainer:
     def _sample_policy_action(self, state: GameState, player: int, legal_actions: List[int]) -> int:
         x = encode_state(state, player).to(DEVICE)
         with torch.no_grad():
-            logp = self.policy_net(x.unsqueeze(0)).squeeze(0)
+            logits = self.policy_net(x.unsqueeze(0)).squeeze(0)
 
         if not legal_actions:
             return 0
-        mask = torch.full((NUM_ACTIONS,), -1e9, device=logp.device)
+        mask = torch.full((NUM_ACTIONS,), -1e9, device=logits.device)
         for a in legal_actions:
             mask[a] = 0.0
 
-        probs = torch.softmax(logp + mask, dim=-1)
+        probs = torch.softmax(logits + mask, dim=-1)
         action = torch.multinomial(probs, 1).item()
         if action not in legal_actions:
             action = RNG.choice(legal_actions)
@@ -690,12 +692,12 @@ class DeepCFRTrainer:
         net = policy_net if policy_net is not None else self.policy_net
 
         with torch.no_grad():
-            logp = net(x.unsqueeze(0)).squeeze(0)
+            logits = net(x.unsqueeze(0)).squeeze(0)
 
         legal_actions = env.legal_actions(state)
         if not legal_actions:
             return 0
-        probs = torch.exp(logp)  # If log-softmax output, else use torch.softmax(logp, -1)
+        probs = torch.softmax(logits, dim=-1)
         mask = torch.zeros(NUM_ACTIONS, dtype=torch.float32, device=DEVICE)
         mask[legal_actions] = 1.0
 

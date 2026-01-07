@@ -1,0 +1,891 @@
+{
+  "hero_policy": "models\\policy phase3_310.pt",
+  "pools": [
+    {
+      "name": "NL2",
+      "description": "Loose-passive, under-bluffing",
+      "specs": [
+        "script:loose_passive",
+        "script:loose_passive",
+        "script:loose_passive"
+      ],
+      "opponent_names": [
+        "loose_passive",
+        "loose_passive",
+        "loose_passive"
+      ]
+    },
+    {
+      "name": "NL5",
+      "description": "Loose-aggressive, weak river",
+      "specs": [
+        "script:loose_aggro_weak_river",
+        "script:loose_aggro_weak_river",
+        "script:overcall"
+      ],
+      "opponent_names": [
+        "loose_aggro_weak_river",
+        "loose_aggro_weak_river",
+        "overcall"
+      ]
+    },
+    {
+      "name": "NL10",
+      "description": "Reg-ish, weak turn defense",
+      "specs": [
+        "script:reg_weak_turn",
+        "models/policy.pt",
+        "script:reg_weak_turn"
+      ],
+      "opponent_names": [
+        "reg_weak_turn",
+        "policy",
+        "reg_weak_turn"
+      ]
+    },
+    {
+      "name": "NL25",
+      "description": "Semi-solverish, low bluff freq",
+      "specs": [
+        "script:semi_solver_low_bluff",
+        "models/policy phase3_120.pt",
+        "script:semi_solver_low_bluff"
+      ],
+      "opponent_names": [
+        "semi_solver_low_bluff",
+        "policy phase3_120",
+        "semi_solver_low_bluff"
+      ]
+    },
+    {
+      "name": "NL50+",
+      "description": "Near-balanced, exploit-aware (best available model)",
+      "specs": [
+        "best_model",
+        "best_model",
+        "script:semi_solver_low_bluff"
+      ],
+      "opponent_names": [
+        "policy phase4_160",
+        "policy phase4_160",
+        "semi_solver_low_bluff"
+      ]
+    }
+  ],
+  "hands": 15000,
+  "num_players": 6,
+  "seed": 493334444,
+  "bootstrap_samples": 5000,
+  "head_to_head": [
+    {
+      "pool": "NL2",
+      "pool_description": "Loose-passive, under-bluffing",
+      "pool_specs": [
+        "script:loose_passive",
+        "script:loose_passive",
+        "script:loose_passive"
+      ],
+      "opponent_names": [
+        "loose_passive",
+        "loose_passive",
+        "loose_passive"
+      ],
+      "hero": "policy phase3_310",
+      "hands": 15000,
+      "mean_bb100": 287.3622222222222,
+      "normal_ci_bb100": [
+        261.33692943669655,
+        313.3875150077479
+      ],
+      "bootstrap_mean_bb100": 287.2071291111111,
+      "bootstrap_ci_bb100": [
+        261.7118888888889,
+        313.3894722222222
+      ],
+      "bootstrap_prob_pos": 1.0,
+      "stats": {
+        "policy phase3_310": {
+          "hands": 45000,
+          "win_pct": 14.837777777777777,
+          "vpip_pct": 19.406666666666666,
+          "pfr_pct": 12.511111111111111,
+          "af": 3.0697784064120697,
+          "avg_profit": 5.747244444444444,
+          "bb_per_100": 287.3622222222222,
+          "showdown_pct": 3.457777777777778,
+          "showdown_win_pct": 35.861182519280206,
+          "cbet_opportunities": 4054,
+          "cbets": 3466,
+          "cbet_successes": 3293,
+          "cbet_pct": 85.49580661075481,
+          "cbet_success_pct": 95.00865551067513,
+          "cbet_faced": 303,
+          "fold_to_cbet": 109,
+          "fold_to_cbet_pct": 35.973597359735976,
+          "bluff_attempts": 6895,
+          "bluff_caught": 459,
+          "bluff_got_through": 6119,
+          "bluff_called_won": 317,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 6.656997824510515,
+          "bluff_got_through_pct": 88.7454677302393,
+          "bluff_called_won_pct": 4.597534445250181,
+          "aggressive_postflop_actions": 6895
+        },
+        "loose_passive": {
+          "hands": 45000,
+          "win_pct": 17.555555555555557,
+          "vpip_pct": 79.82888888888888,
+          "pfr_pct": 3.2,
+          "af": 0.03969187974751257,
+          "avg_profit": -5.747244444444445,
+          "bb_per_100": -287.3622222222223,
+          "showdown_pct": 57.473333333333336,
+          "showdown_win_pct": 30.54556702625372,
+          "cbet_opportunities": 1018,
+          "cbets": 0,
+          "cbet_successes": 0,
+          "cbet_pct": 0.0,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 10398,
+          "fold_to_cbet": 10398,
+          "fold_to_cbet_pct": 100.0,
+          "bluff_attempts": 0,
+          "bluff_caught": 0,
+          "bluff_got_through": 0,
+          "bluff_called_won": 0,
+          "bluff_rate_pct": 0.0,
+          "bluff_caught_pct": 0.0,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 0.0,
+          "aggressive_postflop_actions": 0
+        }
+      },
+      "action_counts": {
+        "policy phase3_310": {
+          "0": [
+            36900,
+            0,
+            3834,
+            3973,
+            1462,
+            692
+          ],
+          "1": [
+            367,
+            1149,
+            263,
+            2816,
+            1558,
+            1427
+          ],
+          "2": [
+            50,
+            419,
+            108,
+            439,
+            204,
+            192
+          ],
+          "3": [
+            8,
+            193,
+            37,
+            152,
+            42,
+            65
+          ]
+        }
+      },
+      "seat_handles_base": [
+        "policy phase3_310",
+        "policy phase3_310",
+        "policy phase3_310",
+        "loose_passive",
+        "loose_passive",
+        "loose_passive"
+      ]
+    },
+    {
+      "pool": "NL5",
+      "pool_description": "Loose-aggressive, weak river",
+      "pool_specs": [
+        "script:loose_aggro_weak_river",
+        "script:loose_aggro_weak_river",
+        "script:overcall"
+      ],
+      "opponent_names": [
+        "loose_aggro_weak_river",
+        "loose_aggro_weak_river",
+        "overcall"
+      ],
+      "hero": "policy phase3_310",
+      "hands": 15000,
+      "mean_bb100": 638.0707546296296,
+      "normal_ci_bb100": [
+        575.0148320232947,
+        701.1266772359645
+      ],
+      "bootstrap_mean_bb100": 637.921408162037,
+      "bootstrap_ci_bb100": [
+        574.9547740740742,
+        700.5370351851852
+      ],
+      "bootstrap_prob_pos": 1.0,
+      "stats": {
+        "policy phase3_310": {
+          "hands": 45000,
+          "win_pct": 4.953333333333333,
+          "vpip_pct": 16.32888888888889,
+          "pfr_pct": 11.335555555555555,
+          "af": 2.610415532571221,
+          "avg_profit": 12.761415092592593,
+          "bb_per_100": 638.0707546296296,
+          "showdown_pct": 13.004444444444445,
+          "showdown_win_pct": 38.08954203691046,
+          "cbet_opportunities": 1602,
+          "cbets": 1445,
+          "cbet_successes": 0,
+          "cbet_pct": 90.19975031210986,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 319,
+          "fold_to_cbet": 103,
+          "fold_to_cbet_pct": 32.288401253918494,
+          "bluff_attempts": 7881,
+          "bluff_caught": 5046,
+          "bluff_got_through": 0,
+          "bluff_called_won": 2835,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 64.02740768937952,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 35.97259231062048,
+          "aggressive_postflop_actions": 7881
+        },
+        "loose_aggro_weak_river": {
+          "hands": 30000,
+          "win_pct": 26.463333333333335,
+          "vpip_pct": 100.0,
+          "pfr_pct": 57.86333333333334,
+          "af": 0.7568105710924066,
+          "avg_profit": -14.887186562500007,
+          "bb_per_100": -744.3593281250004,
+          "showdown_pct": 96.22,
+          "showdown_win_pct": 27.502944640753828,
+          "cbet_opportunities": 6610,
+          "cbets": 2522,
+          "cbet_successes": 0,
+          "cbet_pct": 38.15431164901664,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 6127,
+          "fold_to_cbet": 0,
+          "fold_to_cbet_pct": 0.0,
+          "bluff_attempts": 20139,
+          "bluff_caught": 14097,
+          "bluff_got_through": 0,
+          "bluff_called_won": 6042,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 69.99851035304633,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 30.001489646953672,
+          "aggressive_postflop_actions": 20139
+        },
+        "overcall": {
+          "hands": 15000,
+          "win_pct": 27.753333333333334,
+          "vpip_pct": 100.0,
+          "pfr_pct": 0.0,
+          "af": 0.0,
+          "avg_profit": -8.509872152777776,
+          "bb_per_100": -425.4936076388888,
+          "showdown_pct": 100.0,
+          "showdown_win_pct": 27.753333333333334,
+          "cbet_opportunities": 0,
+          "cbets": 0,
+          "cbet_successes": 0,
+          "cbet_pct": 0.0,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 4766,
+          "fold_to_cbet": 0,
+          "fold_to_cbet_pct": 0.0,
+          "bluff_attempts": 0,
+          "bluff_caught": 0,
+          "bluff_got_through": 0,
+          "bluff_called_won": 0,
+          "bluff_rate_pct": 0.0,
+          "bluff_caught_pct": 0.0,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 0.0,
+          "aggressive_postflop_actions": 0
+        }
+      },
+      "action_counts": {
+        "policy phase3_310": {
+          "0": [
+            36313,
+            2556,
+            4207,
+            3714,
+            1645,
+            1146
+          ],
+          "1": [
+            2294,
+            2035,
+            1075,
+            2030,
+            978,
+            2288
+          ],
+          "2": [
+            539,
+            674,
+            228,
+            545,
+            227,
+            1245
+          ],
+          "3": [
+            2,
+            268,
+            1,
+            116,
+            36,
+            416
+          ]
+        }
+      },
+      "seat_handles_base": [
+        "policy phase3_310",
+        "policy phase3_310",
+        "policy phase3_310",
+        "loose_aggro_weak_river",
+        "loose_aggro_weak_river",
+        "overcall"
+      ]
+    },
+    {
+      "pool": "NL10",
+      "pool_description": "Reg-ish, weak turn defense",
+      "pool_specs": [
+        "script:reg_weak_turn",
+        "models/policy.pt",
+        "script:reg_weak_turn"
+      ],
+      "opponent_names": [
+        "reg_weak_turn",
+        "policy",
+        "reg_weak_turn"
+      ],
+      "hero": "policy phase3_310",
+      "hands": 15000,
+      "mean_bb100": 438.28868518518516,
+      "normal_ci_bb100": [
+        396.1801821421491,
+        480.3971882282211
+      ],
+      "bootstrap_mean_bb100": 438.74401214074084,
+      "bootstrap_ci_bb100": [
+        397.3876717592594,
+        480.33405740740756
+      ],
+      "bootstrap_prob_pos": 1.0,
+      "stats": {
+        "policy phase3_310": {
+          "hands": 45000,
+          "win_pct": 7.404444444444445,
+          "vpip_pct": 15.855555555555556,
+          "pfr_pct": 10.737777777777778,
+          "af": 2.3339123721289328,
+          "avg_profit": 8.765773703703703,
+          "bb_per_100": 438.28868518518516,
+          "showdown_pct": 8.52,
+          "showdown_win_pct": 41.54929577464789,
+          "cbet_opportunities": 1431,
+          "cbets": 1253,
+          "cbet_successes": 0,
+          "cbet_pct": 87.56114605171209,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 175,
+          "fold_to_cbet": 50,
+          "fold_to_cbet_pct": 28.571428571428573,
+          "bluff_attempts": 5706,
+          "bluff_caught": 1454,
+          "bluff_got_through": 1739,
+          "bluff_called_won": 2513,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 25.481948825797406,
+          "bluff_got_through_pct": 30.476691202243252,
+          "bluff_called_won_pct": 44.04135997195934,
+          "aggressive_postflop_actions": 5706
+        },
+        "reg_weak_turn": {
+          "hands": 30000,
+          "win_pct": 33.42,
+          "vpip_pct": 92.17,
+          "pfr_pct": 44.303333333333335,
+          "af": 0.5787971787002638,
+          "avg_profit": -16.56745333333334,
+          "bb_per_100": -828.372666666667,
+          "showdown_pct": 84.92,
+          "showdown_win_pct": 39.35468676401319,
+          "cbet_opportunities": 7656,
+          "cbets": 0,
+          "cbet_successes": 0,
+          "cbet_pct": 0.0,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 3528,
+          "fold_to_cbet": 0,
+          "fold_to_cbet_pct": 0.0,
+          "bluff_attempts": 0,
+          "bluff_caught": 0,
+          "bluff_got_through": 0,
+          "bluff_called_won": 0,
+          "bluff_rate_pct": 0.0,
+          "bluff_caught_pct": 0.0,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 0.0,
+          "aggressive_postflop_actions": 0
+        },
+        "policy": {
+          "hands": 15000,
+          "win_pct": 7.78,
+          "vpip_pct": 21.273333333333333,
+          "pfr_pct": 17.746666666666666,
+          "af": 3.2449725776965264,
+          "avg_profit": 6.837585555555554,
+          "bb_per_100": 341.8792777777777,
+          "showdown_pct": 13.433333333333334,
+          "showdown_win_pct": 35.732009925558316,
+          "cbet_opportunities": 644,
+          "cbets": 495,
+          "cbet_successes": 0,
+          "cbet_pct": 76.86335403726709,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 44,
+          "fold_to_cbet": 13,
+          "fold_to_cbet_pct": 29.545454545454547,
+          "bluff_attempts": 1602,
+          "bluff_caught": 508,
+          "bluff_got_through": 447,
+          "bluff_called_won": 647,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 31.7103620474407,
+          "bluff_got_through_pct": 27.90262172284644,
+          "bluff_called_won_pct": 40.387016229712856,
+          "aggressive_postflop_actions": 1602
+        }
+      },
+      "action_counts": {
+        "policy phase3_310": {
+          "0": [
+            39224,
+            0,
+            4829,
+            3846,
+            1501,
+            1039
+          ],
+          "1": [
+            170,
+            502,
+            273,
+            1280,
+            589,
+            1727
+          ],
+          "2": [
+            29,
+            388,
+            58,
+            856,
+            401,
+            580
+          ],
+          "3": [
+            4,
+            131,
+            21,
+            133,
+            65,
+            75
+          ]
+        }
+      },
+      "seat_handles_base": [
+        "policy phase3_310",
+        "policy phase3_310",
+        "policy phase3_310",
+        "reg_weak_turn",
+        "policy",
+        "reg_weak_turn"
+      ]
+    },
+    {
+      "pool": "NL25",
+      "pool_description": "Semi-solverish, low bluff freq",
+      "pool_specs": [
+        "script:semi_solver_low_bluff",
+        "models/policy phase3_120.pt",
+        "script:semi_solver_low_bluff"
+      ],
+      "opponent_names": [
+        "semi_solver_low_bluff",
+        "policy phase3_120",
+        "semi_solver_low_bluff"
+      ],
+      "hero": "policy phase3_310",
+      "hands": 15000,
+      "mean_bb100": 439.51777777777767,
+      "normal_ci_bb100": [
+        409.63941726310316,
+        469.39613829245224
+      ],
+      "bootstrap_mean_bb100": 439.2549116481482,
+      "bootstrap_ci_bb100": [
+        410.06326504629635,
+        469.36600925925933
+      ],
+      "bootstrap_prob_pos": 1.0,
+      "stats": {
+        "policy phase3_310": {
+          "hands": 45000,
+          "win_pct": 16.8,
+          "vpip_pct": 16.564444444444444,
+          "pfr_pct": 11.4,
+          "af": 3.106194690265487,
+          "avg_profit": 8.790355555555553,
+          "bb_per_100": 439.51777777777767,
+          "showdown_pct": 6.288888888888889,
+          "showdown_win_pct": 37.70318021201413,
+          "cbet_opportunities": 2411,
+          "cbets": 2022,
+          "cbet_successes": 1859,
+          "cbet_pct": 83.86561592700124,
+          "cbet_success_pct": 91.93867457962413,
+          "cbet_faced": 260,
+          "fold_to_cbet": 95,
+          "fold_to_cbet_pct": 36.53846153846154,
+          "bluff_attempts": 7792,
+          "bluff_caught": 802,
+          "bluff_got_through": 6493,
+          "bluff_called_won": 497,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 10.292607802874743,
+          "bluff_got_through_pct": 83.32905544147845,
+          "bluff_called_won_pct": 6.378336755646817,
+          "aggressive_postflop_actions": 7792
+        },
+        "semi_solver_low_bluff": {
+          "hands": 30000,
+          "win_pct": 19.403333333333332,
+          "vpip_pct": 100.0,
+          "pfr_pct": 32.266666666666666,
+          "af": 0.43795620437956206,
+          "avg_profit": -18.34,
+          "bb_per_100": -917.0,
+          "showdown_pct": 45.53333333333333,
+          "showdown_win_pct": 42.61346998535871,
+          "cbet_opportunities": 5749,
+          "cbets": 0,
+          "cbet_successes": 0,
+          "cbet_pct": 0.0,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 5134,
+          "fold_to_cbet": 5134,
+          "fold_to_cbet_pct": 100.0,
+          "bluff_attempts": 0,
+          "bluff_caught": 0,
+          "bluff_got_through": 0,
+          "bluff_called_won": 0,
+          "bluff_rate_pct": 0.0,
+          "bluff_caught_pct": 0.0,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 0.0,
+          "aggressive_postflop_actions": 0
+        },
+        "policy phase3_120": {
+          "hands": 15000,
+          "win_pct": 9.32,
+          "vpip_pct": 15.246666666666666,
+          "pfr_pct": 10.893333333333333,
+          "af": 2.115199034981906,
+          "avg_profit": 10.308933333333334,
+          "bb_per_100": 515.4466666666667,
+          "showdown_pct": 2.953333333333333,
+          "showdown_win_pct": 46.04966139954853,
+          "cbet_opportunities": 632,
+          "cbets": 545,
+          "cbet_successes": 507,
+          "cbet_pct": 86.23417721518987,
+          "cbet_success_pct": 93.02752293577981,
+          "cbet_faced": 67,
+          "fold_to_cbet": 12,
+          "fold_to_cbet_pct": 17.91044776119403,
+          "bluff_attempts": 1423,
+          "bluff_caught": 107,
+          "bluff_got_through": 1194,
+          "bluff_called_won": 122,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 7.519325368938862,
+          "bluff_got_through_pct": 83.90723822909347,
+          "bluff_called_won_pct": 8.573436401967674,
+          "aggressive_postflop_actions": 1423
+        }
+      },
+      "action_counts": {
+        "policy phase3_310": {
+          "0": [
+            34627,
+            3716,
+            3927,
+            3755,
+            1551,
+            942
+          ],
+          "1": [
+            869,
+            2560,
+            400,
+            2833,
+            1472,
+            1874
+          ],
+          "2": [
+            138,
+            1427,
+            130,
+            648,
+            266,
+            229
+          ],
+          "3": [
+            43,
+            1003,
+            63,
+            280,
+            100,
+            90
+          ]
+        }
+      },
+      "seat_handles_base": [
+        "policy phase3_310",
+        "policy phase3_310",
+        "policy phase3_310",
+        "semi_solver_low_bluff",
+        "policy phase3_120",
+        "semi_solver_low_bluff"
+      ]
+    },
+    {
+      "pool": "NL50+",
+      "pool_description": "Near-balanced, exploit-aware (best available model)",
+      "pool_specs": [
+        "best_model",
+        "best_model",
+        "script:semi_solver_low_bluff"
+      ],
+      "opponent_names": [
+        "policy phase4_160",
+        "policy phase4_160",
+        "semi_solver_low_bluff"
+      ],
+      "hero": "policy phase3_310",
+      "hands": 15000,
+      "mean_bb100": 239.798125,
+      "normal_ci_bb100": [
+        212.85781146592586,
+        266.73843853407413
+      ],
+      "bootstrap_mean_bb100": 239.90571964814814,
+      "bootstrap_ci_bb100": [
+        212.9330324074074,
+        267.59184548611114
+      ],
+      "bootstrap_prob_pos": 1.0,
+      "stats": {
+        "policy phase3_310": {
+          "hands": 45000,
+          "win_pct": 13.177777777777777,
+          "vpip_pct": 15.984444444444444,
+          "pfr_pct": 10.533333333333333,
+          "af": 2.469599217986315,
+          "avg_profit": 4.795962499999999,
+          "bb_per_100": 239.79812499999994,
+          "showdown_pct": 6.697777777777778,
+          "showdown_win_pct": 47.777040477770406,
+          "cbet_opportunities": 2084,
+          "cbets": 1780,
+          "cbet_successes": 1453,
+          "cbet_pct": 85.4126679462572,
+          "cbet_success_pct": 81.62921348314607,
+          "cbet_faced": 475,
+          "fold_to_cbet": 149,
+          "fold_to_cbet_pct": 31.36842105263158,
+          "bluff_attempts": 7011,
+          "bluff_caught": 1518,
+          "bluff_got_through": 4490,
+          "bluff_called_won": 1003,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 21.651690201112537,
+          "bluff_got_through_pct": 64.04221936956212,
+          "bluff_called_won_pct": 14.306090429325346,
+          "aggressive_postflop_actions": 7011
+        },
+        "policy phase4_160": {
+          "hands": 30000,
+          "win_pct": 21.05666666666667,
+          "vpip_pct": 48.79,
+          "pfr_pct": 36.68333333333333,
+          "af": 2.3705703678704015,
+          "avg_profit": 6.531600694444446,
+          "bb_per_100": 326.5800347222223,
+          "showdown_pct": 13.19,
+          "showdown_win_pct": 43.088198129896384,
+          "cbet_opportunities": 3617,
+          "cbets": 2903,
+          "cbet_successes": 2464,
+          "cbet_pct": 80.2598838816699,
+          "cbet_success_pct": 84.87771271098863,
+          "cbet_faced": 829,
+          "fold_to_cbet": 265,
+          "fold_to_cbet_pct": 31.966224366706875,
+          "bluff_attempts": 7103,
+          "bluff_caught": 1514,
+          "bluff_got_through": 4612,
+          "bluff_called_won": 977,
+          "bluff_rate_pct": 100.0,
+          "bluff_caught_pct": 21.314937350415317,
+          "bluff_got_through_pct": 64.93031113613966,
+          "bluff_called_won_pct": 13.754751513445024,
+          "aggressive_postflop_actions": 7103
+        },
+        "semi_solver_low_bluff": {
+          "hands": 15000,
+          "win_pct": 17.313333333333333,
+          "vpip_pct": 100.0,
+          "pfr_pct": 31.826666666666668,
+          "af": 0.4063777089783282,
+          "avg_profit": -27.451088888888886,
+          "bb_per_100": -1372.5544444444442,
+          "showdown_pct": 19.206666666666667,
+          "showdown_win_pct": 35.47379382158972,
+          "cbet_opportunities": 328,
+          "cbets": 0,
+          "cbet_successes": 0,
+          "cbet_pct": 0.0,
+          "cbet_success_pct": 0.0,
+          "cbet_faced": 4683,
+          "fold_to_cbet": 4683,
+          "fold_to_cbet_pct": 100.0,
+          "bluff_attempts": 0,
+          "bluff_caught": 0,
+          "bluff_got_through": 0,
+          "bluff_called_won": 0,
+          "bluff_rate_pct": 0.0,
+          "bluff_caught_pct": 0.0,
+          "bluff_got_through_pct": 0.0,
+          "bluff_called_won_pct": 0.0,
+          "aggressive_postflop_actions": 0
+        }
+      },
+      "action_counts": {
+        "policy phase3_310": {
+          "0": [
+            35984,
+            2650,
+            3971,
+            3360,
+            1428,
+            833
+          ],
+          "1": [
+            1216,
+            1679,
+            814,
+            2697,
+            1305,
+            1527
+          ],
+          "2": [
+            238,
+            682,
+            251,
+            578,
+            256,
+            303
+          ],
+          "3": [
+            58,
+            408,
+            79,
+            196,
+            71,
+            78
+          ]
+        }
+      },
+      "seat_handles_base": [
+        "policy phase3_310",
+        "policy phase3_310",
+        "policy phase3_310",
+        "policy phase4_160",
+        "policy phase4_160",
+        "semi_solver_low_bluff"
+      ]
+    }
+  ],
+  "self_play_bb100": 0.0,
+  "stress_tests": [
+    {
+      "opponent": "overfold",
+      "hero_bb100": 22.764444444444447
+    },
+    {
+      "opponent": "overcall",
+      "hero_bb100": 711.8202685185184
+    },
+    {
+      "opponent": "minraise_spam",
+      "hero_bb100": 510.0807407407406
+    },
+    {
+      "opponent": "aggro_raise",
+      "hero_bb100": 527.0711111111111
+    },
+    {
+      "opponent": "limp_heavy",
+      "hero_bb100": 171.78819444444443
+    },
+    {
+      "opponent": "river_raise",
+      "hero_bb100": 633.8906481481481
+    }
+  ],
+  "approx_exploitability_bb100": -22.764444444444447,
+  "stability": {
+    "kl_divergence": 0.0,
+    "mean_bb100_a": 359.3490740740741,
+    "mean_bb100_b": 359.3490740740741,
+    "action_dist_a": [
+      0.4111752949872697,
+      0.2412735784488187,
+      0.062282694992745094,
+      0.15890984751006104,
+      0.07859939223040491,
+      0.04775919183070058
+    ],
+    "action_dist_b": [
+      0.4111752949872697,
+      0.2412735784488187,
+      0.062282694992745094,
+      0.15890984751006104,
+      0.07859939223040491,
+      0.04775919183070058
+    ]
+  },
+  "plots": {
+    "head_to_head": "policy_eval_results\\head_to_head_bb100.png",
+    "stress_tests": "policy_eval_results\\stress_test_bb100.png"
+  }
+}

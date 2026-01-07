@@ -25,26 +25,20 @@ RNG = random.Random(RNG_SEED)
 ACTION_FOLD = 0
 ACTION_CHECK = 1
 ACTION_CALL = 2
-ACTION_RAISE_SMALL = 3   # PF: 2Ã— BB, Postflop: 0.5 pot
-ACTION_RAISE_MEDIUM = 4  # PF: 4Ã— BB, Postflop: 1.0 pot
-ACTION_ALL_IN = 5
-NUM_ACTIONS = 6
-RAISE_ACTIONS = [ACTION_RAISE_SMALL, ACTION_RAISE_MEDIUM]
+ACTION_BET_POT_25 = 3
+ACTION_BET_POT_50 = 4
+ACTION_BET_POT_100 = 5
+ACTION_BET_POT_200 = 6
+ACTION_ALL_IN = 7
+NUM_ACTIONS = 8
+RAISE_ACTIONS = [ACTION_BET_POT_25, ACTION_BET_POT_50, ACTION_BET_POT_100, ACTION_BET_POT_200]
 ACTION_SEQ_LEN = 6  # number of recent actions to keep for sequence encoding
-PREFLOP_RAISE_MULT = {
-    ACTION_RAISE_SMALL: 2.0,
-    ACTION_RAISE_MEDIUM: 4.0,
+BET_POT_FRAC = {
+    ACTION_BET_POT_25: 0.25,
+    ACTION_BET_POT_50: 0.50,
+    ACTION_BET_POT_100: 1.00,
+    ACTION_BET_POT_200: 2.00,
 }
-
-
-POSTFLOP_RAISE_FRAC = {
-    ACTION_RAISE_SMALL: 0.5,
-    ACTION_RAISE_MEDIUM: 1.0,
-}
-
-
-
-# ---------------------------------------------------------
 
 # Streets``
 
@@ -252,12 +246,18 @@ class SimpleHoldemEnv:
         s.last_aggressor = -1
         s.contrib = [0.0 for _ in range(s.num_players)]
         s.actions_this_street = 0
-        start = self._find_next_player(s.contrib, s.folded, s.stacks, (s.button_player + 1) % s.num_players, include_start=True)
-        if start is None:
+        start_player = self._find_next_player(
+            s.contrib,
+            s.folded,
+            s.stacks,
+            (s.button_player + 1) % s.num_players,
+            include_start=True,
+        )
+        if start_player is None:
             s.to_act = -1
             s.players_acted = [True for _ in range(s.num_players)]
         else:
-            self._reset_players_acted(s, start)
+            self._reset_players_acted(s, start_player)
 
     def resolve_showdown(self, s: GameState):
         live_players = [i for i in range(s.num_players) if not s.folded[i]]
@@ -386,8 +386,6 @@ class SimpleHoldemEnv:
 
         return s
 
-
-
     def run_out_board_all_in(self, s: GameState) -> GameState:
         while not s.terminal and s.street < STREET_RIVER:
             self.deal_next_street(s)
@@ -395,34 +393,20 @@ class SimpleHoldemEnv:
             self.resolve_showdown(s)
         return s
 
-
-
     def terminal_payoff(self, s: GameState, hero: int) -> float:
-
         if not s.terminal:
-
             return 0.0
-
         return s.stacks[hero] - s.initial_stacks[hero]
 
-
-
     def _amount_to_call(self, s: GameState, p: int) -> float:
-
         return max(0.0, s.current_bet - s.contrib[p])
-
-
 
     def _maybe_advance_round(self, s: GameState) -> None:
         if self._betting_round_complete(s):
             self._advance_street_or_showdown(s)
 
-
-
     def _can_raise(self, s: GameState, action: int) -> bool:
-
         if action not in RAISE_ACTIONS:
-
             return False
 
         p = s.to_act
@@ -438,42 +422,24 @@ class SimpleHoldemEnv:
         to_call = self._amount_to_call(s, p)
 
         if amount <= to_call or amount > s.stacks[p]:
-
             return False
 
         return True
 
-
-
     def _raise_amount(self, s: GameState, action: int) -> float:
-
         p = s.to_act
-
         to_call = self._amount_to_call(s, p)
-        # print("[DEBUG]: S.TOACT, ACTION, TOCALL",s.to_act,action, to_call)
 
-        if s.street == STREET_PREFLOP:
-            if to_call <= 1 + 1e-9:
-                base_size = PREFLOP_RAISE_MULT[action] * self.bb
-            else:
-                base_size = PREFLOP_RAISE_MULT[action] * to_call
-
-        else:
-
-            pot_base = max(self.bb, s.pot)
-
-            base_size = POSTFLOP_RAISE_FRAC[action] * pot_base
+        pot_base = max(self.bb, s.pot)
+        base_size = BET_POT_FRAC.get(action, 0.0) * pot_base
 
         if base_size <= 0.0:
-
             return 0.0
 
         if to_call <= 0.0:
-
             return base_size
 
         return to_call + base_size
-
 
     def _invest(self, s: GameState, p: int, amount: float) -> float:
 
