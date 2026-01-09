@@ -143,9 +143,11 @@ if __name__ == "__main__":
                     action_probs[a, i, j] = probs[a]
 
         # Plot a grid of heatmaps, one for each action
-        rows = 2
-        cols = 3
-        fig, axes = plt.subplots(rows, cols, figsize=(18, 8))
+        cols = 4
+        rows = int(np.ceil(NUM_ACTIONS / cols))
+        fig, axes = plt.subplots(rows, cols, figsize=(18, 4 * rows))
+        if rows == 1:
+            axes = np.array([axes])
         vmax = np.max(action_probs)  # keep color scale consistent across actions for this seat
 
         for idx, (a, label) in enumerate(ACTION_LABELS.items()):
@@ -160,6 +162,9 @@ if __name__ == "__main__":
             ax.set_xticklabels(RANKS)
             ax.set_yticklabels(RANKS)
             ax.set_title(f"{label} ({pos_label})")
+
+        for idx in range(len(ACTION_LABELS), rows * cols):
+            axes[idx // cols, idx % cols].axis("off")
 
         fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.7, label="Action probability")
         plt.suptitle(f"Preflop Probability Heatmaps ({pos_label})")

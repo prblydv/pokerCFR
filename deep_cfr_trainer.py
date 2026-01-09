@@ -4,12 +4,14 @@ import random
 import time
 import collections
 import os
-from typing import List
+import re
+from typing import List, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from treys import Evaluator, Card
 
 from config import (
     RNG_SEED,
@@ -37,9 +39,15 @@ from poker_env import (
     ACTION_BET_POT_100,
     ACTION_BET_POT_200,
     ACTION_ALL_IN,
+    ACTION_CHECK,
+    ACTION_FOLD,
     STREET_PREFLOP,
+    STREET_FLOP,
+    STREET_TURN,
+    STREET_RIVER,
 )
-from abstraction import encode_state
+from abstraction import encode_state, card_rank, card_suit
+from opponent_model import ExploitController, update_from_action
 from networks import AdvantageNet, PolicyNet, move_to_device
 from replay_buffer import ReservoirBuffer
 
@@ -52,6 +60,230 @@ RAISE_ACTIONS = {ACTION_BET_POT_25, ACTION_BET_POT_50, ACTION_BET_POT_100, ACTIO
 EPS_EXPLOIT = 0.15
 CONFIDENCE_THRESH = 0.7
 OVERBET_BOOST = 1.2
+LAG_POLICY_INTERVAL = 1000
+_TREYS_EVAL = Evaluator()
+
+
+def _card_0_51_to_treys(card: int) -> int:
+    rank_idx = card % 13
+    suit_idx = card // 13
+    rank_chars = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
+    suit_chars = ["s", "h", "d", "c"]
+    return Card.new(f"{rank_chars[rank_idx]}{suit_chars[suit_idx]}")
+
+
+def _hand_class_str(hole: List[int], board: List[int]) -> Optional[str]:
+    cards = hole + board
+    if len(cards) < 5:
+        return None
+    treys_cards = [_card_0_51_to_treys(c) for c in cards]
+    score = _TREYS_EVAL.evaluate(treys_cards, [])
+    class_id = _TREYS_EVAL.get_rank_class(score)
+    return _TREYS_EVAL.class_to_string(class_id)
+
+
+def _is_two_pair_or_better(class_str: Optional[str]) -> bool:
+    if class_str is None:
+        return False
+    return class_str in {
+        "Two Pair",
+        "Three of a Kind",
+        "Straight",
+        "Flush",
+        "Full House",
+        "Four of a Kind",
+        "Straight Flush",
+    }
+
+
+def _is_pair_or_better(class_str: Optional[str]) -> bool:
+    if class_str is None:
+        return False
+    return class_str != "High Card"
+
+
+def _is_top_pair(hole: List[int], board: List[int], class_str: Optional[str]) -> bool:
+    if class_str != "Pair" or not board:
+        return False
+    board_ranks = [card_rank(c) for c in board]
+    top_rank = max(board_ranks)
+    hole_ranks = [card_rank(c) for c in hole]
+    return top_rank in hole_ranks
+
+
+def _has_flush_draw(cards: List[int]) -> bool:
+    if len(cards) < 4:
+        return False
+    suits = [card_suit(c) for c in cards]
+    return max(suits.count(i) for i in range(4)) >= 4
+
+
+def _has_straight_draw(cards: List[int]) -> bool:
+    if len(cards) < 4:
+        return False
+    ranks = {card_rank(c) for c in cards}
+    if 14 in ranks:
+        ranks.add(1)
+    for start in range(1, 11):
+        window = set(range(start, start + 5))
+        if len(window & ranks) >= 4:
+            return True
+    return False
+
+
+def _recent_actions_this_street(state: GameState) -> List:
+    seq = getattr(state, "action_seq", None) or []
+    count = min(len(seq), max(0, getattr(state, "actions_this_street", 0)))
+    if count <= 0:
+        return []
+    return seq[-count:]
+
+
+def _first_legal(preferred: List[int], legal: List[int]) -> int:
+    for a in preferred:
+        if a in legal:
+            return a
+    return legal[0] if legal else ACTION_CHECK
+
+
+def scripted_eval_action(state: GameState, player: int, legal: List[int]) -> int:
+    to_call = max(0.0, state.current_bet - state.contrib[player])
+    pot = max(0.0, state.pot)
+
+    if state.street == STREET_PREFLOP:
+        hole = state.hole[player]
+        ranks = [card_rank(c) for c in hole]
+        is_pair = ranks[0] == ranks[1]
+        pair_rank = ranks[0] if is_pair else 0
+
+        recent = _recent_actions_this_street(state)
+        raise_count = sum(
+            1 for _, act, _ in recent if act in RAISE_ACTIONS or act == ACTION_ALL_IN
+        )
+        facing_all_in = to_call >= (state.stacks[player] - 1e-9)
+        if recent and recent[-1][1] == ACTION_ALL_IN and to_call > 0:
+            facing_all_in = True
+
+        if facing_all_in:
+            if is_pair and pair_rank >= 11:
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CHECK, ACTION_CALL], legal)
+
+        if is_pair and pair_rank >= 13:
+            return _first_legal([ACTION_BET_POT_100, ACTION_CALL, ACTION_CHECK], legal)
+        if is_pair and pair_rank >= 10:
+            return _first_legal([ACTION_BET_POT_50, ACTION_CALL, ACTION_CHECK], legal)
+
+        if to_call > 0:
+            if raise_count <= 1:
+                return _first_legal([ACTION_CALL, ACTION_FOLD], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CALL], legal)
+
+        return _first_legal([ACTION_CHECK], legal)
+
+    hole = state.hole[player]
+    board = state.board
+    class_str = _hand_class_str(hole, board)
+
+    if state.street in (STREET_FLOP, STREET_TURN):
+        if not _is_pair_or_better(class_str):
+            return _first_legal([ACTION_CHECK, ACTION_FOLD], legal)
+
+        if to_call > 0:
+            if to_call <= pot:
+                return _first_legal([ACTION_CALL, ACTION_FOLD], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CALL], legal)
+
+        return _first_legal([ACTION_CHECK], legal)
+
+    if state.street == STREET_RIVER:
+        if _is_two_pair_or_better(class_str):
+            if to_call > 0:
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_CHECK], legal)
+
+        if _is_top_pair(hole, board, class_str):
+            if to_call > 0:
+                if to_call <= pot:
+                    return _first_legal([ACTION_CALL, ACTION_FOLD], legal)
+                return _first_legal([ACTION_FOLD, ACTION_CALL], legal)
+            return _first_legal([ACTION_CHECK], legal)
+
+        if to_call > 0:
+            return _first_legal([ACTION_FOLD, ACTION_CALL], legal)
+        return _first_legal([ACTION_CHECK], legal)
+
+    return _first_legal([ACTION_CHECK, ACTION_CALL, ACTION_FOLD], legal)
+
+
+def scripted_tag_action(state: GameState, player: int, legal: List[int]) -> int:
+    to_call = max(0.0, state.current_bet - state.contrib[player])
+    pot = max(1.0, state.pot)
+
+    if state.street == STREET_PREFLOP:
+        hole = state.hole[player]
+        r1, r2 = sorted([card_rank(c) for c in hole], reverse=True)
+        suited = card_suit(hole[0]) == card_suit(hole[1])
+        is_pair = r1 == r2
+        facing_raise = to_call > 0
+
+        if to_call >= state.stacks[player] - 1e-6:
+            if is_pair and r1 >= 12:
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CHECK, ACTION_CALL], legal)
+
+        if facing_raise:
+            if (is_pair and r1 >= 12) or (r1 == 14 and r2 >= 13):
+                return _first_legal([ACTION_BET_POT_100, ACTION_CALL], legal)
+            if (is_pair and r1 >= 10) or (r1 == 14 and r2 >= 12):
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CHECK], legal)
+
+        if (is_pair and r1 >= 10) or (r1 == 14 and r2 >= 12) or (suited and r1 >= 12):
+            return _first_legal([ACTION_BET_POT_50, ACTION_CHECK], legal)
+
+        return _first_legal([ACTION_CHECK], legal)
+
+    hole = state.hole[player]
+    board = state.board
+    class_str = _hand_class_str(hole, board)
+    cards = hole + board
+
+    if state.street in (STREET_FLOP, STREET_TURN):
+        if _is_two_pair_or_better(class_str):
+            if to_call == 0:
+                return _first_legal([ACTION_BET_POT_50, ACTION_CHECK], legal)
+            return _first_legal([ACTION_CALL], legal)
+
+        if _is_top_pair(hole, board, class_str):
+            if to_call <= pot:
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CHECK], legal)
+
+        if _has_flush_draw(cards) or _has_straight_draw(cards):
+            if to_call <= pot:
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CHECK], legal)
+
+        if to_call == 0 and state.last_aggressor == player:
+            return _first_legal([ACTION_BET_POT_25, ACTION_CHECK], legal)
+
+        return _first_legal([ACTION_CHECK, ACTION_FOLD], legal)
+
+    if state.street == STREET_RIVER:
+        if _is_two_pair_or_better(class_str):
+            if to_call == 0:
+                return _first_legal([ACTION_BET_POT_50, ACTION_CHECK], legal)
+            return _first_legal([ACTION_CALL], legal)
+
+        if _is_top_pair(hole, board, class_str):
+            if to_call <= pot:
+                return _first_legal([ACTION_CALL], legal)
+            return _first_legal([ACTION_FOLD, ACTION_CHECK], legal)
+
+        return _first_legal([ACTION_CHECK, ACTION_FOLD], legal)
+
+    return _first_legal([ACTION_CHECK, ACTION_CALL, ACTION_FOLD], legal)
 
 
 class DeepCFRTrainer:
@@ -96,6 +328,10 @@ class DeepCFRTrainer:
         self._eval_counter = 0
         self._score_anchor_interval = 5  # refresh anchor every N evals
         self._score_min_sigma = 1.0
+        self._lag_policy_state = {
+            k: v.detach().cpu().clone() for k, v in self.policy_net.state_dict().items()
+        }
+        self._iteration = 0
 
         if RESUME_FROM_LAST:
             try:
@@ -103,6 +339,9 @@ class DeepCFRTrainer:
                 if loaded:
                     logger.info(f"Resumed trainer from checkpoint at '{CHECKPOINT_PATH}'.")
                     self.loaded_from_checkpoint = True
+                    self._lag_policy_state = {
+                        k: v.detach().cpu().clone() for k, v in self.policy_net.state_dict().items()
+                    }
             except Exception:
                 logger.warning("Resume flag set but loading checkpoint failed; continuing fresh.", exc_info=True)
 
@@ -232,6 +471,7 @@ class DeepCFRTrainer:
     def sample_strategy_trajectory(self):
         env = self.env
         s = env.new_hand()
+        reach_by_player = [1.0 for _ in range(self.num_players)]
 
         while not s.terminal:
             to_act = s.to_act
@@ -256,7 +496,10 @@ class DeepCFRTrainer:
             if a not in legal_actions:
                 a = RNG.choice(legal_actions)
 
-            self.strat_buffer.add((x.cpu(), probs.cpu(), mask.cpu()))
+            if 0 <= to_act < self.num_players:
+                reach_by_player[to_act] *= probs[a].item()
+                reach_by_player[to_act] = max(1e-3, min(1.0, reach_by_player[to_act]))
+                self.strat_buffer.add((x.cpu(), probs.cpu(), mask.cpu(), reach_by_player[to_act]))
             s = env.step(s, a)
 
 
@@ -291,13 +534,16 @@ class DeepCFRTrainer:
     def train_policy_net(self):
         if len(self.strat_buffer) < BATCH_SIZE:
             return None
-        ce = nn.KLDivLoss(reduction="batchmean")
 
         batch = self.strat_buffer.sample(BATCH_SIZE)
-        xs, target_probs, masks = zip(*batch)
+        xs, target_probs, masks, reach_probs = zip(*batch)
         xs = torch.stack(xs).to(DEVICE)
         target_probs = torch.stack(target_probs).to(DEVICE)
         masks = torch.stack(masks).to(DEVICE)
+        reach_probs = torch.tensor(reach_probs, dtype=torch.float32, device=DEVICE)
+        eps = 1e-9
+        reach_probs = torch.clamp(reach_probs, 1e-3, 1.0)
+        reach_probs = reach_probs / (reach_probs.mean() + eps)
 
         # Mask out illegal actions in target
         target_probs = target_probs * masks
@@ -308,7 +554,9 @@ class DeepCFRTrainer:
         logits = self.policy_net(xs)
         logp = torch.log_softmax(logits, dim=-1)
         logp = logp * masks
-        loss = ce(logp, target_probs)
+        target_probs = torch.clamp(target_probs, eps, 1.0)
+        per_sample = (target_probs * (torch.log(target_probs) - logp)).sum(dim=1)
+        loss = (per_sample * reach_probs).sum() / (reach_probs.sum() + eps)
 
         self.policy_opt.zero_grad()
         loss.backward()
@@ -375,13 +623,21 @@ class DeepCFRTrainer:
         )
         return mirrored
 
-    def _sample_policy_action(self, state: GameState, player: int, legal_actions: List[int]) -> int:
+    def _sample_policy_action(
+        self,
+        state: GameState,
+        player: int,
+        legal_actions: List[int],
+        policy_net: Optional[PolicyNet] = None,
+    ) -> int:
         x = encode_state(state, player).to(DEVICE)
+        net = policy_net if policy_net is not None else self.policy_net
         with torch.no_grad():
-            logits = self.policy_net(x.unsqueeze(0)).squeeze(0)
+            logits = net(x.unsqueeze(0)).squeeze(0)
 
         if not legal_actions:
             return 0
+
         mask = torch.full((NUM_ACTIONS,), -1e9, device=logits.device)
         for a in legal_actions:
             mask[a] = 0.0
@@ -394,6 +650,11 @@ class DeepCFRTrainer:
 
     def eval_vs_random(self, num_hands: int = RANDOM_MATCH_HANDS):
         env = self.env
+        lag_policy = move_to_device(PolicyNet(self.state_dim))
+        lag_policy.load_state_dict(self._lag_policy_state)
+        lag_policy.eval()
+        exploit_enabled = self._iteration >= 2000
+        exploit_controller = ExploitController(self.num_players) if exploit_enabled else None
         stats = {
             pid: {"hands": 0, "wins": 0, "vpip": 0, "pfr": 0, "aggr": 0, "calls": 0, "actions": 0, "payoff": 0.0}
             for pid in range(self.num_players)
@@ -412,9 +673,25 @@ class DeepCFRTrainer:
                     break
                 player = s.to_act
                 if player == 0:
-                    action = RNG.choice(legal)
+                    action = scripted_eval_action(s, player, legal)
+                elif player == 2:
+                    action = scripted_tag_action(s, player, legal)
+                elif player == 3:
+                    if exploit_enabled:
+                        x = encode_state(s, player).to(DEVICE)
+                        with torch.no_grad():
+                            logits = lag_policy(x.unsqueeze(0)).squeeze(0)
+                        action = exploit_controller.choose_action(s, player, legal, logits)
+                    else:
+                        action = self._sample_policy_action(s, player, legal, policy_net=lag_policy)
                 else:
-                    action = self._sample_policy_action(s, player, legal)
+                    if exploit_enabled:
+                        x = encode_state(s, player).to(DEVICE)
+                        with torch.no_grad():
+                            logits = self.policy_net(x.unsqueeze(0)).squeeze(0)
+                        action = exploit_controller.choose_action(s, player, legal, logits)
+                    else:
+                        action = self._sample_policy_action(s, player, legal)
 
                 info = hand_flags[player]
                 info["actions"] += 1
@@ -430,6 +707,19 @@ class DeepCFRTrainer:
                 elif action == ACTION_CALL:
                     info["calls"] += 1
 
+                to_call = max(0.0, s.current_bet - s.contrib[player])
+                facing_bet = to_call > 0
+                bet_bucket = action if action in RAISE_ACTIONS else None
+                if exploit_enabled:
+                    update_from_action(
+                        exploit_controller,
+                        s,
+                        player,
+                        action,
+                        s.street,
+                        facing_bet,
+                        bet_bucket,
+                    )
                 s = env.step(s, action)
 
             winner = s.winner
@@ -496,6 +786,52 @@ class DeepCFRTrainer:
         sigma = max(sigma, min_sigma)
         return delta / sigma
 
+    @staticmethod
+    def _policy_ev_vs_bots(match_stats: dict, bot_players=(0, 2)) -> Optional[float]:
+        players = match_stats.get("players", {})
+        evs = []
+        for pid, summary in players.items():
+            if not isinstance(pid, int):
+                continue
+            if pid in bot_players:
+                continue
+            ev = summary.get("ev")
+            if ev is not None:
+                evs.append(ev)
+        if not evs:
+            return None
+        return sum(evs) / len(evs)
+
+    def _maybe_save_policy_by_ev(self, policy_ev: float, save_dir: str = "modelsby", max_keep: int = 5) -> None:
+        os.makedirs(save_dir, exist_ok=True)
+        entries = []
+        for name in os.listdir(save_dir):
+            m = re.match(r"^policyev_(-?\d+)\.pt$", name)
+            if m:
+                ev_points = int(m.group(1))
+                entries.append((ev_points / 100.0, name))
+
+        worst_ev = min((ev for ev, _ in entries), default=None)
+        if worst_ev is not None and len(entries) >= max_keep and policy_ev <= worst_ev:
+            return
+
+        ev_points = int(round(policy_ev * 100.0))
+        filename = f"policyev_{ev_points}.pt"
+        torch.save(self.policy_net.state_dict(), os.path.join(save_dir, filename))
+        logger.info(f"[PolicySave] Saved policy EV={policy_ev:.3f} to {save_dir}/{filename}")
+
+        entries.append((ev_points / 100.0, filename))
+        deduped = {name: ev for ev, name in entries}
+        entries = [(ev, name) for name, ev in deduped.items()]
+        if len(entries) > max_keep:
+            entries.sort(key=lambda x: x[0])
+            for ev, name in entries[: len(entries) - max_keep]:
+                try:
+                    os.remove(os.path.join(save_dir, name))
+                    logger.info(f"[PolicySave] Removed policy EV={ev:.3f} file {save_dir}/{name}")
+                except OSError:
+                    logger.warning(f"[PolicySave] Failed to remove {save_dir}/{name}", exc_info=True)
+
     ...
 
 
@@ -508,6 +844,7 @@ class DeepCFRTrainer:
               strat_samples_per_iter: int):
         try:
             for it in range(1, num_iterations + 1):
+                self._iteration = it
                 iter_start_time = time.time()
                 adv_losses_iter = []
 
@@ -569,6 +906,9 @@ class DeepCFRTrainer:
                         logger.info(
                             f"[RandomMatch] iter {it} avg_policy_ev={match_stats['players']['_policy_avg_ev']:.2f}"
                         )
+                    policy_ev_vs_bots = self._policy_ev_vs_bots(match_stats, bot_players=(0, 2))
+                    if policy_ev_vs_bots is not None:
+                        self._maybe_save_policy_by_ev(policy_ev_vs_bots)
                     if self.policy_snapshots:
                         prev = self.policy_snapshots[-1]
                         vs_prev = self.eval_vs_policy(prev, num_hands=RANDOM_MATCH_HANDS)
@@ -623,6 +963,10 @@ class DeepCFRTrainer:
                                 self._eval_counter = 0
                                 logger.info(f"[EvalScore] anchor refreshed to {ev_bb100:.2f} bb/100")
                     self._snapshot_policy_state()
+                if it % LAG_POLICY_INTERVAL == 0:
+                    self._lag_policy_state = {
+                        k: v.detach().cpu().clone() for k, v in self.policy_net.state_dict().items()
+                    }
         except KeyboardInterrupt:
             logger.warning("KeyboardInterrupt caught inside trainer; saving models before re-raising.")
             try:

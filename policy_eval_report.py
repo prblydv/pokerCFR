@@ -52,7 +52,7 @@ from poker_env import (
     STREET_TURN,
     STREET_RIVER,
 )
-from abstraction import encode_state, normalized_strength
+from abstraction import encode_state, coarse_strength
 from networks import PolicyNet
 
 VPIP_ACTIONS = {
@@ -87,7 +87,7 @@ ACTION_LABELS = {
     ACTION_BET_POT_200: "Bet 200%",
     ACTION_ALL_IN: "All-in",
 }
-BLUFF_STRENGTH_THRESHOLD = 0.45
+BLUFF_STRENGTH_THRESHOLD = 0
 
 STAKE_POOL_DEFS = {
     "NL2": {
@@ -365,31 +365,31 @@ def scripted_river_raise(state, player: int, legal_actions: List[int]) -> int:
 
 
 def scripted_loose_passive(state, player: int, legal_actions: List[int]) -> int:
-    strength = normalized_strength(state.hole[player], state.board)
+    strength = coarse_strength(state.hole[player], state.board)
     to_call = _to_call(state, player)
     if state.street == STREET_PREFLOP:
-        if strength >= 0.75 and ACTION_BET_POT_50 in legal_actions and random.random() < 0.15:
+        if strength >= 2 and ACTION_BET_POT_50 in legal_actions and random.random() < 0.15:
             return ACTION_BET_POT_50
         if to_call > 0 and ACTION_CALL in legal_actions:
             return ACTION_CALL
         return _first_legal(legal_actions, [ACTION_CHECK, ACTION_CALL, ACTION_FOLD])
     if to_call > 0:
-        if strength >= 0.6 and ACTION_CALL in legal_actions:
+        if strength >= 1 and ACTION_CALL in legal_actions:
             return ACTION_CALL
         if ACTION_FOLD in legal_actions:
             return ACTION_FOLD
-    if strength >= 0.8 and ACTION_BET_POT_50 in legal_actions and random.random() < 0.1:
+    if strength >= 2 and ACTION_BET_POT_50 in legal_actions and random.random() < 0.1:
         return ACTION_BET_POT_50
     return _first_legal(legal_actions, [ACTION_CHECK, ACTION_CALL, ACTION_FOLD])
 
 
 def scripted_loose_aggro_weak_river(state, player: int, legal_actions: List[int]) -> int:
-    strength = normalized_strength(state.hole[player], state.board)
+    strength = coarse_strength(state.hole[player], state.board)
     to_call = _to_call(state, player)
     if state.street == STREET_RIVER:
-        if to_call > 0 and strength < 0.6 and ACTION_FOLD in legal_actions:
+        if to_call > 0 and strength < 1 and ACTION_FOLD in legal_actions:
             return ACTION_FOLD
-        if strength >= 0.75 and ACTION_BET_POT_100 in legal_actions:
+        if strength >= 2 and ACTION_BET_POT_100 in legal_actions:
             return ACTION_BET_POT_100
         return _first_legal(legal_actions, [ACTION_CALL, ACTION_CHECK, ACTION_FOLD])
 
@@ -401,19 +401,19 @@ def scripted_loose_aggro_weak_river(state, player: int, legal_actions: List[int]
 
 
 def scripted_reg_weak_turn(state, player: int, legal_actions: List[int]) -> int:
-    strength = normalized_strength(state.hole[player], state.board)
+    strength = coarse_strength(state.hole[player], state.board)
     to_call = _to_call(state, player)
     if state.street == STREET_PREFLOP:
-        if strength >= 0.6 and ACTION_BET_POT_50 in legal_actions:
+        if strength >= 1 and ACTION_BET_POT_50 in legal_actions:
             return ACTION_BET_POT_50
         if to_call > 0 and ACTION_CALL in legal_actions:
             return ACTION_CALL
         return _first_legal(legal_actions, [ACTION_CHECK, ACTION_CALL, ACTION_FOLD])
 
-    if state.street == STREET_TURN and to_call > 0 and strength < 0.55 and ACTION_FOLD in legal_actions:
+    if state.street == STREET_TURN and to_call > 0 and strength < 1 and ACTION_FOLD in legal_actions:
         return ACTION_FOLD
 
-    if strength >= 0.7 and ACTION_BET_POT_50 in legal_actions and random.random() < 0.25:
+    if strength >= 1 and ACTION_BET_POT_50 in legal_actions and random.random() < 0.25:
         return ACTION_BET_POT_50
     if to_call > 0 and ACTION_CALL in legal_actions:
         return ACTION_CALL
@@ -421,20 +421,20 @@ def scripted_reg_weak_turn(state, player: int, legal_actions: List[int]) -> int:
 
 
 def scripted_semi_solver_low_bluff(state, player: int, legal_actions: List[int]) -> int:
-    strength = normalized_strength(state.hole[player], state.board)
+    strength = coarse_strength(state.hole[player], state.board)
     to_call = _to_call(state, player)
     if state.street == STREET_PREFLOP:
-        if strength >= 0.65 and ACTION_BET_POT_50 in legal_actions:
+        if strength >= 1 and ACTION_BET_POT_50 in legal_actions:
             return ACTION_BET_POT_50
         if to_call > 0 and ACTION_CALL in legal_actions:
             return ACTION_CALL
         return _first_legal(legal_actions, [ACTION_CHECK, ACTION_CALL, ACTION_FOLD])
 
-    if strength >= 0.78 and ACTION_BET_POT_100 in legal_actions:
+    if strength >= 2 and ACTION_BET_POT_100 in legal_actions:
         return ACTION_BET_POT_100
-    if strength >= 0.7 and ACTION_BET_POT_50 in legal_actions:
+    if strength >= 1 and ACTION_BET_POT_50 in legal_actions:
         return ACTION_BET_POT_50
-    if to_call > 0 and strength < 0.35 and ACTION_FOLD in legal_actions:
+    if to_call > 0 and strength < 1 and ACTION_FOLD in legal_actions:
         return ACTION_FOLD
     if to_call > 0 and ACTION_CALL in legal_actions:
         return ACTION_CALL
@@ -626,7 +626,7 @@ def run_match(
 
             strength = None
             if action in RAISE_ACTIONS or action in (ACTION_CALL, ACTION_CHECK):
-                strength = normalized_strength(state.hole[player], state.board)
+                strength = coarse_strength(state.hole[player], state.board)
 
             if state.street >= STREET_FLOP and action in RAISE_ACTIONS:
                 stats[policy_name].aggressive_postflop_actions += 1
@@ -657,7 +657,7 @@ def run_match(
 
             if state.street >= STREET_FLOP and action in RAISE_ACTIONS:
                 if strength is None:
-                    strength = normalized_strength(state.hole[player], state.board)
+                    strength = coarse_strength(state.hole[player], state.board)
                 if strength <= BLUFF_STRENGTH_THRESHOLD:
                     stats[policy_name].bluff_attempts += 1
                     bluff_events.append(

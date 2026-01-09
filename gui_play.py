@@ -50,7 +50,7 @@ ACTION_NAMES = {
 }
 
 alwaysshowopponetn_cards = False
-useargmax = True
+useargmax = False
 useargmax_epsilon = 0.9
 gatingallin = False
 
@@ -240,8 +240,8 @@ class PokerGUI:
         self.env = SimpleHoldemEnv(num_players=6)
         dummy = self.env.new_hand()
         state_dim = encode_state(dummy, 0).shape[0]
-        self.policy_default = load_policy(state_dim, "models/policy phase3_310.pt")
-        self.policy_phase2 = load_policy(state_dim, "models/policy phase3_310.pt")
+        self.policy_default = load_policy(state_dim, "models/policy.pt")
+        self.policy_phase2 = load_policy(state_dim, "models/policy.pt")
         # Player 0 is you; pick which bot seats use which policy here.
         self.phase2_players = {1, 2, 3}
         self.player_labels = {0: "You"}

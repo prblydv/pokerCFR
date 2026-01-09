@@ -42,7 +42,7 @@ from poker_env import (
     STREET_TURN,
     STREET_RIVER,
 )
-from abstraction import encode_state, card_rank, card_suit, normalized_strength
+from abstraction import encode_state, card_rank, card_suit, coarse_strength
 from networks import PolicyNet
 
 VPIP_ACTIONS = {
@@ -88,7 +88,7 @@ STREET_NAMES = {
     STREET_TURN: "Turn",
     STREET_RIVER: "River",
 }
-BLUFF_STRENGTH_THRESHOLD = 0.45
+BLUFF_STRENGTH_THRESHOLD = 0
 
 
 @dataclass
@@ -352,7 +352,7 @@ def run_matches(
 
             strength = None
             if action in RAISE_ACTIONS or action in (ACTION_CALL, ACTION_CHECK):
-                strength = normalized_strength(state.hole[player], state.board)
+                strength = coarse_strength(state.hole[player], state.board)
                 street_stats = strength_by_action[policy_name][state.street]
                 if action in RAISE_ACTIONS:
                     street_stats["aggr_sum"] += strength
@@ -390,7 +390,7 @@ def run_matches(
 
             if state.street >= STREET_FLOP and action in RAISE_ACTIONS:
                 if strength is None:
-                    strength = normalized_strength(state.hole[player], state.board)
+                    strength = coarse_strength(state.hole[player], state.board)
                 if strength <= BLUFF_STRENGTH_THRESHOLD:
                     stats[policy_name].bluff_attempts += 1
                     bluff_events.append(
