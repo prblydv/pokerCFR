@@ -1,0 +1,6 @@
+torch>=2.1
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8
+jupyterlab>=4.0
+pybind11>=3.0.1

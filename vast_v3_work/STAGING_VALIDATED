@@ -1,0 +1,4 @@
+Validated on Vast RTX 5080 on 2026-07-23.
+Architecture, backward pass, diagnostic CFR iteration, 28 unit tests,
+notebook JSON, migration compilation, inference benchmark, and batch-8192
+training-memory check passed.
